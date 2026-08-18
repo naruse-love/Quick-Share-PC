@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickSharePC", "QuickSharePC\QuickSharePC.csproj", "{A28D965A-37E8-4AB6-B84A-19608F194D34}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickSharePC.EmpiricalTests", "QuickSharePC.EmpiricalTests\QuickSharePC.EmpiricalTests.csproj", "{7F77ECDD-0EBB-4CDD-B1A2-7C0491AC1FAC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A28D965A-37E8-4AB6-B84A-19608F194D34}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A28D965A-37E8-4AB6-B84A-19608F194D34}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A28D965A-37E8-4AB6-B84A-19608F194D34}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A28D965A-37E8-4AB6-B84A-19608F194D34}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7F77ECDD-0EBB-4CDD-B1A2-7C0491AC1FAC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7F77ECDD-0EBB-4CDD-B1A2-7C0491AC1FAC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7F77ECDD-0EBB-4CDD-B1A2-7C0491AC1FAC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7F77ECDD-0EBB-4CDD-B1A2-7C0491AC1FAC}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

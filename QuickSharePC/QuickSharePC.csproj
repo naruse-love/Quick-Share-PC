@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Quick-Share-PC</AssemblyName>
+    <Product>Quick Share</Product>
+    <Title>Quick Share PC</Title>
+    <Description>High-Speed LAN File Transfer Suite for Windows</Description>
+  </PropertyGroup>
+
+</Project>

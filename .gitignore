@@ -1,0 +1,17 @@
+.gradle/
+.idea/
+.DS_Store
+*.iml
+build/
+captures/
+local.properties
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.cache
+*.log
+*.lnk
+TestResults/
+__pycache__/
