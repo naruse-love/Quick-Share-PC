@@ -65,16 +65,10 @@ namespace QuickShare.PC.Services
                                 _onProgress?.Invoke(iName, path, (long)index * FileBlock.BLOCK_SIZE + length, totalSize);
 
                                 byte[] buffer = _writeFileCall.GetBuffer();
-                                int offset = 0;
-                                while (offset < length)
+                                if (length > 0)
                                 {
-                                    int read = await channel.BaseStream.ReadAsync(buffer, offset, length - offset);
-                                    if (read <= 0)
-                                    {
-                                        throw new EndOfStreamException($"Connection closed prematurely while receiving block index {index} for {path}");
-                                    }
-                                    _connection.AddDownloadedBytes(read);
-                                    offset += read;
+                                    await channel.ReadFullyAsync(buffer, 0, length);
+                                    _connection.AddDownloadedBytes(length);
                                 }
 
                                 _writeFileCall.PutBlock(new FileBlock(true, fileIndex, path, lastModified, totalSize, index, buffer, length), _tIndex);

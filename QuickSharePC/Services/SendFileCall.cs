@@ -47,21 +47,25 @@ namespace QuickShare.PC.Services
                         if (fileBlock == ReadFileCall.END_POINT)
                         {
                             channel.WriteShort(QuickShareConstants.EOF);
+                            await channel.BaseStream.FlushAsync();
                             _onComplete?.Invoke(iName, _connection.GetTotalTraffic().UploadTraffic, stopwatch.ElapsedMilliseconds);
                         }
                         else if (fileBlock == ReadFileCall.INTERRUPT)
                         {
                             channel.WriteShort(QuickShareConstants.END_OF_INTERRUPTED);
+                            await channel.BaseStream.FlushAsync();
                             _onError?.Invoke(iName, 4, null);
                         }
                         else if (fileBlock == ReadFileCall.READ_ERROR)
                         {
                             channel.WriteShort(QuickShareConstants.END_OF_READ_ERROR);
+                            await channel.BaseStream.FlushAsync();
                             _onError?.Invoke(iName, 5, null);
                         }
                         else if (fileBlock == ReadFileCall.WRITE_ERROR)
                         {
                             channel.WriteShort(QuickShareConstants.END_OF_WRITE_ERROR);
+                            await channel.BaseStream.FlushAsync();
                             _onError?.Invoke(iName, 6, null);
                         }
                         break;
@@ -72,7 +76,11 @@ namespace QuickShare.PC.Services
                     channel.WriteUTF(fileBlock.Path);
                     channel.WriteLong(fileBlock.LastModified);
 
-                    if (!fileBlock.IsFile) continue;
+                    if (!fileBlock.IsFile)
+                    {
+                        await channel.BaseStream.FlushAsync();
+                        continue;
+                    }
 
                     channel.WriteLong(fileBlock.TotalSize);
                     channel.WriteInt(fileBlock.Index);
@@ -82,7 +90,11 @@ namespace QuickShare.PC.Services
 
                     if (fileBlock.Data != null)
                     {
-                        await channel.BaseStream.WriteAsync(fileBlock.Data.AsMemory(0, fileBlock.DataLength));
+                        if (fileBlock.DataLength > 0)
+                        {
+                            await channel.BaseStream.WriteAsync(fileBlock.Data.AsMemory(0, fileBlock.DataLength));
+                            await channel.BaseStream.FlushAsync();
+                        }
                         _readFileCall.RecycleBuffer(fileBlock.Data);
                         _connection.AddUploadedBytes(fileBlock.DataLength);
                     }

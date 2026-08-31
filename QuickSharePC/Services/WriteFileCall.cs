@@ -30,7 +30,8 @@ namespace QuickShare.PC.Services
             FileBlock? currentBlock = null;
             try
             {
-                FileBlock? lastBlock = null;
+                string? lastPath = null;
+                long lastModified = 0;
                 long cursor = 0;
 
                 while (!_queue.IsCompleted && !_isCanceled)
@@ -63,20 +64,23 @@ namespace QuickShare.PC.Services
                     CreateParentDirIfNotExists(currentBlock.Path);
 
                     // When transitioning to a new file, close previous and open current
-                    if (lastBlock == null || lastBlock.Path != currentBlock.Path)
+                    if (lastPath == null || lastPath != currentBlock.Path)
                     {
                         if (_currentFileStream != null)
                         {
                             CloseFile();
-                            if (lastBlock != null)
+                            if (lastPath != null)
                             {
-                                SetLastModified(lastBlock.Path, lastBlock.LastModified);
+                                SetLastModified(lastPath, lastModified);
                             }
                         }
 
                         _currentFileStream = CreateAndOpenFile(currentBlock.Path, currentBlock.TotalSize);
                         cursor = 0;
                     }
+
+                    lastPath = currentBlock.Path;
+                    lastModified = currentBlock.LastModified;
 
                     // Seek to block position if required
                     if (cursor != currentBlock.GetStartPosition())
@@ -105,14 +109,12 @@ namespace QuickShare.PC.Services
                         _buffers.Add(currentBlock.Data);
                         currentBlock = null;
                     }
-
-                    lastBlock = currentBlock;
                 }
 
-                if (lastBlock != null)
+                if (lastPath != null)
                 {
                     CloseFile();
-                    SetLastModified(lastBlock.Path, lastBlock.LastModified);
+                    SetLastModified(lastPath, lastModified);
                 }
             }
             catch (Exception)
@@ -135,6 +137,16 @@ namespace QuickShare.PC.Services
         public byte[] GetBuffer()
         {
             return _buffers.Take();
+        }
+
+        public byte[]? GetBuffer(int timeoutMs)
+        {
+            if (_isCanceled) return null;
+            if (_buffers.TryTake(out var buffer, timeoutMs))
+            {
+                return buffer;
+            }
+            return null;
         }
 
         public void PutBlock(FileBlock block, int tIndex = 0)

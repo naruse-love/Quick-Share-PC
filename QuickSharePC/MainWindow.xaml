@@ -6,97 +6,183 @@
         xmlns:local="clr-namespace:QuickShare.PC"
         xmlns:converters="clr-namespace:QuickShare.PC.Converters"
         mc:Ignorable="d"
-        Title="Quick Share (PC)" Height="720" Width="1080"
-        MinHeight="600" MinWidth="900"
-        Background="#F8F9FA"
+        Title="Quick Share (PC) - 局域网极速快传" Height="750" Width="1120"
+        MinHeight="650" MinWidth="960"
+        Background="#F8FAFC"
+        FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
         <converters:FileSizeConverter x:Key="FileSizeConverter" />
         <converters:StatusColorConverter x:Key="StatusColorConverter" />
 
-        <!-- Modern Style Definitions -->
-        <Style TargetType="TextBlock" x:Key="HeaderStyle">
-            <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-            <Setter Property="FontSize" Value="16" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="#202124" />
-            <Setter Property="Margin" Value="0,0,0,10" />
-        </Style>
-
+        <!-- Card Container Style with Soft Fluent Shadow -->
         <Style TargetType="Border" x:Key="CardStyle">
             <Setter Property="Background" Value="#FFFFFF" />
-            <Setter Property="BorderBrush" Value="#DADCE0" />
+            <Setter Property="BorderBrush" Value="#E2E8F0" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Padding" Value="15" />
-            <Setter Property="Margin" Value="0,0,0,15" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="18" />
+            <Setter Property="Margin" Value="0,0,0,16" />
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="#0F172A" BlurRadius="12" Opacity="0.04" Direction="270" ShadowDepth="2" />
+                </Setter.Value>
+            </Setter>
         </Style>
 
+        <!-- Section Header Style -->
+        <Style TargetType="TextBlock" x:Key="HeaderStyle">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#0F172A" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+
+        <!-- Primary Modern Button (Indigo Accent) -->
         <Style TargetType="Button" x:Key="PrimaryButtonStyle">
-            <Setter Property="Background" Value="#1A73E8" />
+            <Setter Property="Background" Value="#4F46E5" />
             <Setter Property="Foreground" Value="#FFFFFF" />
-            <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="13" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Padding" Value="15,8" />
-            <Setter Property="Height" Value="36" />
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Height" Value="38" />
+            <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                CornerRadius="4"
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="8"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#4338CA" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#3730A3" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Background" Value="#CBD5E1" />
+                                <Setter Property="Foreground" Value="#94A3B8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#1557B0" />
-                </Trigger>
-            </Style.Triggers>
         </Style>
 
+        <!-- Secondary Button (Outlined / Clean White) -->
         <Style TargetType="Button" x:Key="SecondaryButtonStyle">
             <Setter Property="Background" Value="#FFFFFF" />
-            <Setter Property="Foreground" Value="#1A73E8" />
-            <Setter Property="BorderBrush" Value="#1A73E8" />
+            <Setter Property="Foreground" Value="#334155" />
+            <Setter Property="BorderBrush" Value="#CBD5E1" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Padding" Value="15,8" />
-            <Setter Property="Height" Value="36" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="4"
+                                CornerRadius="8"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#F8FAFC" />
+                                <Setter TargetName="border" Property="BorderBrush" Value="#94A3B8" />
+                                <Setter Property="Foreground" Value="#0F172A" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#F1F5F9" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#F1F3F4" />
-                </Trigger>
-            </Style.Triggers>
+        </Style>
+
+        <!-- Modern Clean TextBox -->
+        <Style TargetType="TextBox" x:Key="ModernTextBoxStyle">
+            <Setter Property="Background" Value="#F8FAFC" />
+            <Setter Property="BorderBrush" Value="#E2E8F0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#0F172A" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="false" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="#6366F1" />
+                                <Setter TargetName="border" Property="Background" Value="#FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern TabControl Style -->
+        <Style TargetType="TabItem">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="16,10" />
+            <Setter Property="Foreground" Value="#64748B" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="tabBorder"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="0,0,0,2"
+                                Padding="{TemplateBinding Padding}"
+                                Margin="0,0,8,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" ContentSource="Header" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="#4F46E5" />
+                                <Setter TargetName="tabBorder" Property="BorderBrush" Value="#4F46E5" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#4338CA" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
-    <Grid Margin="15">
+    <Grid Margin="20">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="420" />
+            <ColumnDefinition Width="400" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
         <!-- Left Column: Controls and Settings -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Grid.Column="0" Margin="0,0,10,0">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Grid.Column="0" Margin="0,0,12,0">
             <StackPanel>
                 <!-- Service Status Card -->
                 <Border Style="{StaticResource CardStyle}">
@@ -108,16 +194,29 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="服务状态" Style="{StaticResource HeaderStyle}" />
+                        <TextBlock Grid.Row="0" Text="服务与连接状态" Style="{StaticResource HeaderStyle}" />
 
-                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,5,0,10">
-                            <Ellipse Width="12" Height="12" Fill="{Binding ServerStatusText, Converter={StaticResource StatusColorConverter}}" Margin="0,0,8,0" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding ServerStatusText}" FontWeight="Bold" FontSize="14" Foreground="#3C4043" VerticalAlignment="Center"/>
-                        </StackPanel>
+                        <!-- Status Badge Pill -->
+                        <Border Grid.Row="1" Background="#F1F5F9" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Width="10" Height="10" Fill="{Binding ServerStatusText, Converter={StaticResource StatusColorConverter}}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="{Binding ServerStatusText}" FontWeight="Bold" FontSize="14" Foreground="#1E293B" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
 
-                        <StackPanel Grid.Row="2" Margin="0,0,0,15">
-                            <TextBlock Text="{Binding ConnectedDevice, StringFormat='📱 连接设备: {0}'}" FontSize="13" Foreground="#5F6368" Margin="0,0,0,5" />
-                            <TextBlock Text="{Binding Port, StringFormat='🔌 监听端口: {0}'}" FontSize="13" Foreground="#5F6368" />
+                        <StackPanel Grid.Row="2" Margin="0,0,0,14">
+                            <Grid Margin="0,3">
+                                <TextBlock Text="📱 远端设备:" FontSize="13" Foreground="#64748B" HorizontalAlignment="Left" />
+                                <TextBlock Text="{Binding ConnectedDevice, FallbackValue='未连接'}" FontSize="13" FontWeight="SemiBold" Foreground="#1E293B" HorizontalAlignment="Right" />
+                            </Grid>
+                            <Grid Margin="0,3">
+                                <TextBlock Text="🔌 监听端口:" FontSize="13" Foreground="#64748B" HorizontalAlignment="Left" />
+                                <TextBlock Text="{Binding Port}" FontSize="13" FontWeight="SemiBold" Foreground="#1E293B" HorizontalAlignment="Right" />
+                            </Grid>
                         </StackPanel>
 
                         <Button Grid.Row="3" Command="{Binding ToggleServerCommand}">
@@ -125,11 +224,11 @@
                                 <Style TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsServerRunning}" Value="True">
-                                            <Setter Property="Background" Value="#EA4335" />
-                                            <Setter Property="Content" Value="🛑 停止服务" />
+                                            <Setter Property="Background" Value="#EF4444" />
+                                            <Setter Property="Content" Value="⏹️ 停止服务" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding IsServerRunning}" Value="False">
-                                            <Setter Property="Background" Value="#1A73E8" />
+                                            <Setter Property="Background" Value="#4F46E5" />
                                             <Setter Property="Content" Value="▶️ 启动服务" />
                                         </DataTrigger>
                                     </Style.Triggers>
@@ -149,43 +248,39 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="网络状态" Style="{StaticResource HeaderStyle}" />
+                        <TextBlock Grid.Row="0" Text="网络配置信息" Style="{StaticResource HeaderStyle}" />
 
                         <!-- IP Highlight Box -->
-                        <Border Grid.Row="1" Background="#F8F9FA" BorderBrush="#DADCE0" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,12">
+                        <Border Grid.Row="1" Background="#EEF2FF" BorderBrush="#C7D2FE" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,12">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock Text="📡 本机局域网 IP" FontSize="11" Foreground="#5F6368" Margin="0,0,0,3" />
-                                    <TextBlock Text="{Binding PrimaryLanIp}" FontSize="16" FontWeight="Bold" Foreground="#1A73E8" FontFamily="Consolas, Microsoft YaHei UI" />
+                                    <TextBlock Text="📡 本机局域网 LAN IP" FontSize="11" FontWeight="SemiBold" Foreground="#4F46E5" Margin="0,0,0,4" />
+                                    <TextBlock Text="{Binding PrimaryLanIp}" FontSize="17" FontWeight="Bold" Foreground="#312E81" FontFamily="Consolas, Segoe UI" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Command="{Binding CopyIpCommand}" Content="📋 复制" Style="{StaticResource SecondaryButtonStyle}" Height="30" Padding="10,3" VerticalAlignment="Center" ToolTip="复制 IP 到剪贴板" />
+                                <Button Grid.Column="1" Command="{Binding CopyIpCommand}" Content="复制 IP" Style="{StaticResource SecondaryButtonStyle}" Height="30" Padding="10,3" VerticalAlignment="Center" ToolTip="复制 IP 到剪贴板" />
                             </Grid>
                         </Border>
 
                         <!-- Network Details -->
                         <StackPanel Grid.Row="2" Margin="0,0,0,12">
-                            <Grid Margin="0,2">
-                                <TextBlock Text="当前网络:" FontSize="12" Foreground="#5F6368" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding PrimaryNetworkType}" FontSize="12" FontWeight="SemiBold" Foreground="#3C4043" HorizontalAlignment="Right" />
+                            <Grid Margin="0,3">
+                                <TextBlock Text="网络类型:" FontSize="12.5" Foreground="#64748B" HorizontalAlignment="Left" />
+                                <TextBlock Text="{Binding PrimaryNetworkType}" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Right" />
                             </Grid>
-                            <Grid Margin="0,2">
-                                <TextBlock Text="适配器名称:" FontSize="12" Foreground="#5F6368" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding PrimaryAdapterName}" FontSize="12" FontWeight="SemiBold" Foreground="#3C4043" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" MaxWidth="220" />
+                            <Grid Margin="0,3">
+                                <TextBlock Text="网卡适配器:" FontSize="12.5" Foreground="#64748B" HorizontalAlignment="Left" />
+                                <TextBlock Text="{Binding PrimaryAdapterName}" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" MaxWidth="210" />
                             </Grid>
-                            <Grid Margin="0,2">
-                                <TextBlock Text="传输端口:" FontSize="12" Foreground="#5F6368" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding Port, StringFormat='{}{0}'}" FontSize="12" FontWeight="SemiBold" Foreground="#3C4043" HorizontalAlignment="Right" />
-                            </Grid>
-                            <Border Background="#E8F0FE" CornerRadius="4" Padding="8,6" Margin="0,8,0,0">
-                                <TextBlock Text="💡 提示: 在手机端连接页面输入上方 IP 与端口即可极速互传" FontSize="11" Foreground="#1A73E8" TextWrapping="Wrap" />
+                            <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,8,0,0">
+                                <TextBlock Text="💡 提示: 手机端「客户端连接」中输入上方 IP 和端口即可高速互传" FontSize="11.5" Foreground="#475569" TextWrapping="Wrap" LineHeight="16" />
                             </Border>
                         </StackPanel>
 
-                        <Button Grid.Row="3" Content="🔄 刷新网络信息" Command="{Binding RefreshInterfacesCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="32" />
+                        <Button Grid.Row="3" Content="🔄 刷新网络状态" Command="{Binding RefreshInterfacesCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="34" />
                     </Grid>
                 </Border>
 
@@ -199,157 +294,184 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="设置" Style="{StaticResource HeaderStyle}" />
+                        <TextBlock Grid.Row="0" Text="存储与偏好设置" Style="{StaticResource HeaderStyle}" />
 
                         <!-- Save Directory -->
-                        <StackPanel Grid.Row="1" Margin="0,0,0,15">
-                            <TextBlock Text="📁 文件接收保存目录" FontSize="13" FontWeight="SemiBold" Foreground="#3C4043" Margin="0,0,0,5" />
+                        <StackPanel Grid.Row="1" Margin="0,0,0,14">
+                            <TextBlock Text="📁 文件保存目录" FontSize="13" FontWeight="SemiBold" Foreground="#334155" Margin="0,0,0,6" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBox Text="{Binding SelectedSaveDir, Mode=TwoWay}" IsReadOnly="True" Background="#F1F3F4" BorderBrush="#DADCE0" BorderThickness="1" Padding="5" Height="28" Grid.Column="0" VerticalContentAlignment="Center" ToolTip="{Binding SelectedSaveDir}" />
-                                <Button Grid.Column="1" Command="{Binding BrowseSaveDirCommand}" Content="浏览..." Background="#FFFFFF" BorderBrush="#DADCE0" BorderThickness="1" Margin="5,0,0,0" Width="55" Height="28" />
+                                <TextBox Text="{Binding SelectedSaveDir, Mode=TwoWay}" IsReadOnly="True" Style="{StaticResource ModernTextBoxStyle}" Height="32" Grid.Column="0" ToolTip="{Binding SelectedSaveDir}" />
+                                <Button Grid.Column="1" Command="{Binding BrowseSaveDirCommand}" Content="更改..." Style="{StaticResource SecondaryButtonStyle}" Height="32" Margin="6,0,0,0" Padding="10,0" />
                             </Grid>
-                            <Button Content="📂 打开此目录" Command="{Binding OpenSaveDirCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="28" Margin="0,5,0,0" />
+                            <Button Content="📂 打开此目录" Command="{Binding OpenSaveDirCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="30" Margin="0,6,0,0" />
                         </StackPanel>
 
                         <!-- Port -->
-                        <Grid Grid.Row="2" Margin="0,0,0,15">
+                        <Grid Grid.Row="2" Margin="0,0,0,14">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="90" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="🔌 服务端监听端口" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Foreground="#3C4043" />
-                            <TextBox Text="{Binding Port, Mode=TwoWay}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Grid.Column="1" Height="28" BorderBrush="#DADCE0" BorderThickness="1" />
+                            <TextBlock Text="🔌 监听端口" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Foreground="#334155" />
+                            <TextBox Text="{Binding Port, Mode=TwoWay}" HorizontalContentAlignment="Center" Style="{StaticResource ModernTextBoxStyle}" Grid.Column="1" Height="32" />
                         </Grid>
 
                         <!-- Auto Start -->
-                        <CheckBox Grid.Row="3" IsChecked="{Binding AutoStart, Mode=TwoWay}" Content="🚀 开机自动启动服务端 (托盘模式)" FontSize="13" Foreground="#3C4043" VerticalAlignment="Center" />
+                        <CheckBox Grid.Row="3" IsChecked="{Binding AutoStart, Mode=TwoWay}" Content="🚀 开机自动启动服务端 (托盘运行)" FontSize="12.5" Foreground="#334155" VerticalAlignment="Center" />
                     </Grid>
                 </Border>
             </StackPanel>
         </ScrollViewer>
 
         <!-- Right Column: Files & Transfers -->
-        <Grid Grid.Column="1" Margin="10,0,0,0">
+        <Grid Grid.Column="1" Margin="12,0,0,0">
             <Grid.RowDefinitions>
-                <RowDefinition Height="180" />
+                <RowDefinition Height="175" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
             <!-- Drag and Drop Panel -->
-            <Border Grid.Row="0" Style="{StaticResource CardStyle}" AllowDrop="True" Drop="FileDropPanel_Drop" DragEnter="FileDropPanel_DragEnter" Background="#F1F8FF" BorderBrush="#A3C7FF" BorderThickness="1.5">
+            <Border Grid.Row="0"
+                    Style="{StaticResource CardStyle}"
+                    AllowDrop="True"
+                    Drop="FileDropPanel_Drop"
+                    DragEnter="FileDropPanel_DragEnter"
+                    Background="#F8FAFC"
+                    BorderBrush="#A5B4FC"
+                    BorderThickness="1.5">
                 <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="📥 拖拽文件或文件夹到此处发送到手机" FontSize="14" FontWeight="SemiBold" Foreground="#1A73E8" HorizontalAlignment="Center" Margin="0,0,0,5" />
-                    <TextBlock Grid.Row="1" Text="或" FontSize="12" Foreground="#5F6368" HorizontalAlignment="Center" Margin="0,0,0,5" />
-                    <Button Grid.Row="2" Content="📂 打开文件管理器选择文件" Command="{Binding SelectAndSendFilesCommand}" Style="{StaticResource PrimaryButtonStyle}" Height="32" Width="200" HorizontalAlignment="Center" />
+                    <TextBlock Grid.Row="0" Text="📥 拖拽文件或文件夹到此处直接发送到手机" FontSize="14.5" FontWeight="Bold" Foreground="#4338CA" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="1" Text="支持任意格式与大文件直接局域网极速直传" FontSize="12" Foreground="#64748B" HorizontalAlignment="Center" Margin="0,0,0,10" />
+                    <Button Grid.Row="2" Content="📂 选择文件 / 文件夹并发送" Command="{Binding SelectAndSendFilesCommand}" Style="{StaticResource PrimaryButtonStyle}" Height="34" Width="220" HorizontalAlignment="Center" />
                 </Grid>
             </Border>
 
-            <!-- Bottom Tabs: Transfers & Logs -->
-            <TabControl Grid.Row="1" Background="#FFFFFF" BorderBrush="#DADCE0" BorderThickness="1">
-                <!-- Active Transfers -->
-                <TabItem Header=" 当前传输 ">
-                    <Grid Background="#FFFFFF" Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="活动任务" FontWeight="SemiBold" FontSize="13" Foreground="#3C4043" Margin="0,0,0,10" />
-                        <ListView Grid.Row="1" ItemsSource="{Binding TransferTasks}" BorderThickness="0">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="#F1F3F4" BorderThickness="0,0,0,1" Padding="5,10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
+            <!-- Bottom Tabs: Transfers, History & Logs -->
+            <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="14,10">
+                <TabControl Background="Transparent" BorderThickness="0">
+                    <!-- Active Transfers -->
+                    <TabItem Header="当前传输">
+                        <Grid Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="活动任务列表" FontWeight="Bold" FontSize="13.5" Foreground="#0F172A" Margin="0,0,0,10" />
+                            <ListView Grid.Row="1" ItemsSource="{Binding TransferTasks}" BorderThickness="0" Background="Transparent">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="#F1F5F9" BorderThickness="0,0,0,1" Padding="6,12">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
 
-                                            <!-- File name and dir -->
-                                            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,0,0,5">
-                                                <Border Background="#E8F0FE" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
-                                                    <TextBlock Text="{Binding Direction}" Foreground="#1A73E8" FontSize="11" FontWeight="Bold" />
+                                                <!-- File name and dir badge -->
+                                                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Border Background="#EEF2FF" CornerRadius="4" Padding="6,2" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding Direction}" Foreground="#4F46E5" FontSize="11" FontWeight="Bold" />
+                                                    </Border>
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="Bold" FontSize="13.5" Foreground="#0F172A" TextTrimming="CharacterEllipsis" MaxWidth="360" />
+                                                </StackPanel>
+
+                                                <!-- Progress Bar -->
+                                                <ProgressBar Grid.Row="1" Grid.Column="0" Height="6" Minimum="0" Maximum="100" Value="{Binding Progress}" Background="#E2E8F0" Foreground="#4F46E5" Margin="0,0,0,6">
+                                                    <ProgressBar.Template>
+                                                        <ControlTemplate TargetType="ProgressBar">
+                                                            <Grid x:Name="Root">
+                                                                <Border Background="{TemplateBinding Background}" CornerRadius="3" />
+                                                                <Border x:Name="PART_Track" />
+                                                                <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}" CornerRadius="3" HorizontalAlignment="Left" />
+                                                            </Grid>
+                                                        </ControlTemplate>
+                                                    </ProgressBar.Template>
+                                                </ProgressBar>
+
+                                                <!-- Details -->
+                                                <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding BytesTransferred, Converter={StaticResource FileSizeConverter}}" FontSize="11.5" Foreground="#64748B" />
+                                                    <TextBlock Text=" / " FontSize="11.5" Foreground="#64748B" />
+                                                    <TextBlock Text="{Binding Size, Converter={StaticResource FileSizeConverter}}" FontSize="11.5" Foreground="#64748B" />
+                                                    <TextBlock Text="  •  速度: " FontSize="11.5" Foreground="#94A3B8" />
+                                                    <TextBlock Text="{Binding Speed}" FontSize="11.5" Foreground="#4F46E5" FontWeight="Bold" />
+                                                </StackPanel>
+
+                                                <!-- Status -->
+                                                <TextBlock Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" Text="{Binding Status}" VerticalAlignment="Center" HorizontalAlignment="Right" FontWeight="Bold" Foreground="{Binding Status, Converter={StaticResource StatusColorConverter}}" FontSize="13" Margin="14,0,6,0" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- History -->
+                    <TabItem Header="历史记录">
+                        <Grid Margin="0,12,0,0">
+                            <ListView ItemsSource="{Binding TransferHistories}" BorderThickness="0" Background="Transparent">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="#F1F5F9" BorderThickness="0,0,0,1" Padding="6,10">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Background="#F1F5F9" CornerRadius="4" Padding="6,2" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Direction}" FontSize="11" Foreground="#475569" FontWeight="Bold" />
                                                 </Border>
-                                                <TextBlock Text="{Binding FileName}" FontWeight="Bold" FontSize="13" Foreground="#202124" TextTrimming="CharacterEllipsis" MaxWidth="300" />
-                                            </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding FileName}" FontSize="13" FontWeight="Medium" Foreground="#0F172A" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" MaxWidth="320" />
+                                                <TextBlock Grid.Column="2" Text="{Binding SizeString}" FontSize="12" Foreground="#64748B" Margin="15,0,0,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="3" Text="{Binding TimeString}" FontSize="12" Foreground="#94A3B8" Margin="15,0,0,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="4" Text="{Binding Status}" FontWeight="Bold" Foreground="{Binding Status, Converter={StaticResource StatusColorConverter}}" FontSize="12" Margin="15,0,6,0" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </TabItem>
 
-                                            <!-- Progress Bar -->
-                                            <ProgressBar Grid.Row="1" Grid.Column="0" Height="8" Minimum="0" Maximum="100" Value="{Binding Progress}" Background="#F1F3F4" Foreground="#1A73E8" Margin="0,0,0,5" />
-
-                                            <!-- Details -->
-                                            <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal">
-                                                <TextBlock Text="{Binding BytesTransferred, Converter={StaticResource FileSizeConverter}}" FontSize="11" Foreground="#5F6368" />
-                                                <TextBlock Text=" / " FontSize="11" Foreground="#5F6368" />
-                                                <TextBlock Text="{Binding Size, Converter={StaticResource FileSizeConverter}}" FontSize="11" Foreground="#5F6368" />
-                                                <TextBlock Text="  |  " FontSize="11" Foreground="#DADCE0" />
-                                                <TextBlock Text="{Binding Speed}" FontSize="11" Foreground="#1A73E8" FontWeight="SemiBold" />
-                                            </StackPanel>
-
-                                            <!-- Status -->
-                                            <TextBlock Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" Text="{Binding Status}" VerticalAlignment="Center" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="{Binding Status, Converter={StaticResource StatusColorConverter}}" FontSize="13" Margin="10,0,5,0" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                    </Grid>
-                </TabItem>
-
-                <!-- History -->
-                <TabItem Header=" 历史记录 ">
-                    <Grid Background="#FFFFFF" Margin="10">
-                        <ListView ItemsSource="{Binding TransferHistories}" BorderThickness="0">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="#F1F3F4" BorderThickness="0,0,0,1" Padding="5,8">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <Border Grid.Column="0" Background="#F1F3F4" CornerRadius="3" Padding="5,2" Margin="0,0,10,0" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Direction}" FontSize="11" Foreground="#5F6368" FontWeight="Bold" />
-                                            </Border>
-                                            <TextBlock Grid.Column="1" Text="{Binding FileName}" FontSize="13" Foreground="#202124" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" MaxWidth="300" />
-                                            <TextBlock Grid.Column="2" Text="{Binding SizeString}" FontSize="12" Foreground="#5F6368" Margin="15,0,0,0" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="3" Text="{Binding TimeString}" FontSize="12" Foreground="#5F6368" Margin="15,0,0,0" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="4" Text="{Binding Status}" FontWeight="SemiBold" Foreground="{Binding Status, Converter={StaticResource StatusColorConverter}}" FontSize="12" Margin="15,0,5,0" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                    </Grid>
-                </TabItem>
-
-                <!-- Logs -->
-                <TabItem Header=" 日志记录 ">
-                    <Grid Background="#FFFFFF" Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBox Grid.Row="0" Text="{Binding LogText}" IsReadOnly="True" AcceptsReturn="True" Background="#F8F9FA" BorderBrush="#DADCE0" BorderThickness="1" Padding="8" FontFamily="Consolas, Courier New" FontSize="11.5" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
-                        <Button Grid.Row="1" Content="🗑️ 清除日志" Command="{Binding ClearLogsCommand}" Style="{StaticResource SecondaryButtonStyle}" Margin="0,8,0,0" HorizontalAlignment="Right" Width="100" Height="28" />
-                    </Grid>
-                </TabItem>
-            </TabControl>
+                    <!-- Logs -->
+                    <TabItem Header="系统日志">
+                        <Grid Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBox Grid.Row="0" Text="{Binding LogText}" IsReadOnly="True" AcceptsReturn="True" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" Padding="10" FontFamily="Consolas, Cascadia Code, Courier New" FontSize="11.5" Foreground="#334155" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                                <TextBox.Template>
+                                    <ControlTemplate TargetType="TextBox">
+                                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+                                            <ScrollViewer x:Name="PART_ContentHost" Focusable="false" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+                                        </Border>
+                                    </ControlTemplate>
+                                </TextBox.Template>
+                            </TextBox>
+                            <Button Grid.Row="1" Content="🗑️ 清空日志" Command="{Binding ClearLogsCommand}" Style="{StaticResource SecondaryButtonStyle}" Margin="0,10,0,0" HorizontalAlignment="Right" Width="105" Height="30" />
+                        </Grid>
+                    </TabItem>
+                </TabControl>
+            </Border>
         </Grid>
     </Grid>
 </Window>

@@ -58,6 +58,7 @@ namespace QuickShare.PC.ViewModels
             // Load Config
             _config = _configService.LoadConfig();
             SelectedSaveDir = _config.SaveDirectory;
+            _server.SaveDirectory = SelectedSaveDir;
             Port = _config.Port;
             AutoStart = _config.AutoStart;
 
@@ -154,6 +155,7 @@ namespace QuickShare.PC.ViewModels
             set
             {
                 _selectedSaveDir = value;
+                _server.SaveDirectory = _selectedSaveDir;
                 OnPropertyChanged();
                 _config.SaveDirectory = _selectedSaveDir;
                 _configService.SaveConfig(_config);
@@ -354,10 +356,20 @@ namespace QuickShare.PC.ViewModels
             }
 
             string dest = _server.RemoteHomeDir;
-            if (string.IsNullOrEmpty(dest)) dest = "/";
+            if (string.IsNullOrWhiteSpace(dest) || dest == "/" || dest == "\\")
+            {
+                dest = "/sdcard/Download";
+            }
 
             AppendLog($"准备发送 {paths.Length} 个文件/文件夹到手机目录: {dest}...");
-            await Task.Run(() => _server.SendFilesToRemoteAsync(paths.ToList(), dest));
+            try
+            {
+                await Task.Run(() => _server.SendFilesToRemoteAsync(paths.ToList(), dest));
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"发送任务异常: {ex.Message}");
+            }
         }
 
         public async Task SelectAndSendFilesAsync()
