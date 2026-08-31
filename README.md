@@ -17,7 +17,7 @@
 
 ## 📖 项目简介
 
-**Quick-Share-PC** 是一款基于 C# 与 .NET 7 WPF 构建的 Windows 桌面局域网高速文件传输工具。与手机端 [Quick-Share-Android](../Quick-Share-Android) 深度互通，实现 PC 与手机之间免流量、免数据线、高带宽的大文件与批量文件夹极速互传。
+**Quick-Share-PC** 是一款基于 C# 与 .NET 7 WPF 构建的 Windows 桌面局域网高速文件传输工具。与手机端 [Quick-Share-Android](https://github.com/naruse-love/Quick-Share-Android) 深度互通，实现 PC 与手机之间免流量、免数据线、高带宽的大文件与批量文件夹极速互传。
 
 本项目彻底移除了以往多物理网卡绑定切片的繁琐设置，聚焦于**纯局域网极致单流吞吐优化**，提供清晰直观的本地网络状态展示、一键复制 IP、托盘后台运行及流式磁盘异步写入，轻松跑满千兆网卡与高速 SSD。
 
