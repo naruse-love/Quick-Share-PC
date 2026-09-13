@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using QuickShare.PC.Models;
@@ -17,12 +19,15 @@ namespace QuickShare.PC.Services
         private readonly BlockingCollection<byte[]> _buffers;
         private readonly BlockingCollection<FileBlock> _queue = new BlockingCollection<FileBlock>();
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private readonly string? _baseSaveDir;
+        private readonly List<(string Path, long LastModified)> _createdDirectories = new List<(string Path, long LastModified)>();
         private FileStream? _currentFileStream = null;
         private volatile bool _isCanceled = false;
 
-        public WriteFileCall(BlockingCollection<byte[]> buffers, int dequeCount = 1)
+        public WriteFileCall(BlockingCollection<byte[]> buffers, int dequeCount = 1, string? baseSaveDir = null)
         {
             _buffers = buffers;
+            _baseSaveDir = baseSaveDir;
         }
 
         public async Task ExecuteAsync()
@@ -53,18 +58,23 @@ namespace QuickShare.PC.Services
 
                     if (currentBlock == null) break;
 
+                    string targetPath = ResolveTargetPath(currentBlock.Path);
+
                     if (!currentBlock.IsFile)
                     {
                         // Folder creation
-                        TryMkdirs(currentBlock.Path);
-                        SetLastModified(currentBlock.Path, currentBlock.LastModified);
+                        TryMkdirs(targetPath);
+                        if (currentBlock.LastModified > 0)
+                        {
+                            _createdDirectories.Add((targetPath, currentBlock.LastModified));
+                        }
                         continue;
                     }
 
-                    CreateParentDirIfNotExists(currentBlock.Path);
+                    CreateParentDirIfNotExists(targetPath);
 
                     // When transitioning to a new file, close previous and open current
-                    if (lastPath == null || lastPath != currentBlock.Path)
+                    if (lastPath == null || lastPath != targetPath)
                     {
                         if (_currentFileStream != null)
                         {
@@ -75,11 +85,11 @@ namespace QuickShare.PC.Services
                             }
                         }
 
-                        _currentFileStream = CreateAndOpenFile(currentBlock.Path, currentBlock.TotalSize);
+                        _currentFileStream = CreateAndOpenFile(targetPath, currentBlock.TotalSize);
                         cursor = 0;
                     }
 
-                    lastPath = currentBlock.Path;
+                    lastPath = targetPath;
                     lastModified = currentBlock.LastModified;
 
                     // Seek to block position if required
@@ -115,6 +125,13 @@ namespace QuickShare.PC.Services
                 {
                     CloseFile();
                     SetLastModified(lastPath, lastModified);
+                }
+
+                // Re-apply directory timestamps in reverse order (bottom-up / deepest first)
+                // because creating/writing child files in NTFS updates the parent directory's LastWriteTime.
+                for (int i = _createdDirectories.Count - 1; i >= 0; i--)
+                {
+                    SetLastModified(_createdDirectories[i].Path, _createdDirectories[i].LastModified);
                 }
             }
             catch (Exception)
@@ -220,14 +237,54 @@ namespace QuickShare.PC.Services
             }
         }
 
+        private string ResolveTargetPath(string originalPath)
+        {
+            if (string.IsNullOrEmpty(_baseSaveDir)) return originalPath;
+
+            string normBase = Path.GetFullPath(_baseSaveDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string normPath = originalPath.Replace('/', Path.DirectorySeparatorChar);
+
+            // If already inside _baseSaveDir
+            if (normPath.StartsWith(normBase, StringComparison.OrdinalIgnoreCase))
+            {
+                return normPath;
+            }
+
+            // Strip leading Windows drive or Android /sdcard/Download specifiers
+            string relPath = normPath;
+            if (Regex.IsMatch(relPath, @"^[A-Za-z]:\\"))
+            {
+                relPath = relPath.Substring(3);
+            }
+            else if (relPath.StartsWith(@"\sdcard\Download\", StringComparison.OrdinalIgnoreCase))
+            {
+                relPath = relPath.Substring(17);
+            }
+            else if (relPath.StartsWith(@"sdcard\Download\", StringComparison.OrdinalIgnoreCase))
+            {
+                relPath = relPath.Substring(16);
+            }
+
+            while (relPath.StartsWith(Path.DirectorySeparatorChar.ToString()) || relPath.StartsWith(Path.AltDirectorySeparatorChar.ToString()))
+            {
+                relPath = relPath.Substring(1);
+            }
+
+            return Path.Combine(normBase, relPath);
+        }
+
         private void SetLastModified(string path, long time)
         {
             try
             {
-                if (File.Exists(path) || Directory.Exists(path))
+                var dt = DateTimeOffset.FromUnixTimeMilliseconds(time).LocalDateTime;
+                if (File.Exists(path))
                 {
-                    var dt = DateTimeOffset.FromUnixTimeMilliseconds(time).LocalDateTime;
                     File.SetLastWriteTime(path, dt);
+                }
+                else if (Directory.Exists(path))
+                {
+                    Directory.SetLastWriteTime(path, dt);
                 }
             }
             catch (Exception ex)

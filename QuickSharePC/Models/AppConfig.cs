@@ -9,6 +9,9 @@ namespace QuickShare.PC.Models
         public string SaveDirectory { get; set; } = GetDefaultSaveDirectory();
         public bool AutoStart { get; set; } = false;
         public bool AutoStartServer { get; set; } = true;
+        public string TargetIp { get; set; } = "192.168.1.100";
+        public int TargetPort { get; set; } = 5740;
+        public bool IsClientMode { get; set; } = false;
 
         public static string GetDefaultSaveDirectory()
         {

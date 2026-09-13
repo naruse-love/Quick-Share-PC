@@ -11,31 +11,31 @@ using QuickShare.PC.Models;
 
 namespace QuickShare.PC.Services
 {
-    public class QuickShareServer
+    /// <summary>
+    /// QuickShare Protocol v300 Client implementation for Windows Desktop.
+    /// Connects to a remote QuickShare server (Android or PC), performs protocol handshake,
+    /// and orchestrates bi-directional high-speed LAN streaming file transfers.
+    /// </summary>
+    public class QuickShareClient
     {
-        private readonly NetworkService _networkService;
-        private TcpListener? _listener;
-        private CancellationTokenSource? _cts;
-        private bool _isListening;
-        private readonly BlockingCollection<byte[]> _buffers = new BlockingCollection<byte[]>();
-        private readonly SemaphoreSlim _controlLock = new SemaphoreSlim(1, 1);
-
-        // Control channel
         private TcpClient? _controlClient;
         private QuickShareStream? _ctChannel;
-
-        // Data transfer connection (Single LAN stream)
         private readonly List<TransferConnection> _connections = new List<TransferConnection>();
+        private readonly List<TcpClient> _dataClients = new List<TcpClient>();
+        private readonly BlockingCollection<byte[]> _buffers = new BlockingCollection<byte[]>();
+        private readonly SemaphoreSlim _controlLock = new SemaphoreSlim(1, 1);
+        private CancellationTokenSource? _cts;
 
         public bool IsConnected => _controlClient != null && _controlClient.Connected;
-        public string ConnectedDeviceIP { get; private set; } = string.Empty;
-        public int RemoteFileSystem { get; private set; }
+        public string ConnectedServerIp { get; private set; } = string.Empty;
+        public int ConnectedServerPort { get; private set; } = 0;
+        public int RemoteFileSystem { get; private set; } = QuickShareDirectory.FILE_SYSTEM_UNIX;
         public string RemoteHomeDir { get; private set; } = string.Empty;
         public string SaveDirectory { get; set; } = AppConfig.GetDefaultSaveDirectory();
 
-        // Events
-        public event Action<string>? OnDeviceConnected;
-        public event Action? OnDeviceDisconnected;
+        // Connection & Status Events
+        public event Action<string>? OnConnected;
+        public event Action? OnDisconnected;
         public event Action<string>? OnStatusChanged;
         public event Action<string>? OnLogMessage;
 
@@ -44,213 +44,265 @@ namespace QuickShare.PC.Services
         public event Action<TransferTask>? OnTransferProgress;
         public event Action<TransferTask>? OnTransferCompleted;
 
-        public QuickShareServer(NetworkService? networkService = null)
-        {
-            _networkService = networkService ?? new NetworkService();
-        }
-
         private void Log(string msg)
         {
             OnLogMessage?.Invoke(msg);
         }
 
-        public void Start(int port)
+        /// <summary>
+        /// Connects to a remote QuickShare server endpoint and performs protocol handshake.
+        /// </summary>
+        public async Task<bool> ConnectAsync(string targetIp, int targetPort = QuickShareConstants.DEFAULT_PORT, int timeoutMs = 5000)
         {
-            if (_isListening) return;
-
-            _cts = new CancellationTokenSource();
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Start();
-            _isListening = true;
-            OnStatusChanged?.Invoke($"正在监听 端口 {port}");
-            Log($"服务端已启动，正在监听端口 {port}...");
-
-            Task.Run(() => AcceptLoopAsync(_cts.Token));
-        }
-
-        // Backward-compatible overload
-        public void Start(int port, List<NetworkInterfaceInfo>? selectedInterfaces)
-        {
-            Start(port);
-        }
-
-        public void Stop()
-        {
-            _isListening = false;
-            _cts?.Cancel();
-            _listener?.Stop();
-            _listener = null;
-
-            DisconnectCurrentDevice();
-            OnStatusChanged?.Invoke("已停止");
-            Log("服务端已停止。");
-        }
-
-        private async Task AcceptLoopAsync(CancellationToken ct)
-        {
-            while (!ct.IsCancellationRequested && _isListening)
+            if (string.IsNullOrWhiteSpace(targetIp))
             {
-                try
+                throw new ArgumentException("服务端 IP 地址不能为空", nameof(targetIp));
+            }
+
+            Disconnect();
+
+            OnStatusChanged?.Invoke("正在连接...");
+            Log($"正在连接服务端 {targetIp}:{targetPort}...");
+
+            var ctrlClient = new TcpClient { NoDelay = true };
+
+            try
+            {
+                var connectTask = ctrlClient.ConnectAsync(targetIp, targetPort);
+                if (await Task.WhenAny(connectTask, Task.Delay(timeoutMs)) != connectTask)
                 {
-                    TcpClient client = await _listener!.AcceptTcpClientAsync(ct);
-                    client.NoDelay = true;
-                    Log($"收到来自 {client.Client.RemoteEndPoint} 的控制通道连接请求。");
+                    ctrlClient.Close();
+                    throw new TimeoutException($"连接服务端 {targetIp}:{targetPort} 超时 (已等待 {timeoutMs}ms)。");
+                }
+                await connectTask;
 
-                    if (IsConnected)
+                var stream = ctrlClient.GetStream();
+                var ctChannel = new QuickShareStream(stream);
+
+                // Step 1: Send Header "HFXC" & Version Code (300)
+                byte[] headerBytes = Encoding.UTF8.GetBytes(QuickShareConstants.CLIENT_HEADER);
+                await ctChannel.BaseStream.WriteAsync(headerBytes, 0, headerBytes.Length);
+                ctChannel.WriteInt(QuickShareConstants.VERSION_CODE);
+                await ctChannel.BaseStream.FlushAsync();
+
+                // Step 2: Version Match Check
+                bool versionMatched = await ctChannel.ReadBooleanAsync();
+                if (!versionMatched)
+                {
+                    int serverVersion = await ctChannel.ReadIntAsync();
+                    ctrlClient.Close();
+                    throw new InvalidOperationException($"协议版本不匹配: 服务端版本为 {serverVersion}，当前客户端版本为 {QuickShareConstants.VERSION_CODE}。");
+                }
+
+                // Step 3: Read Advertised Interface(s)
+                int serverNicCount = await ctChannel.ReadIntAsync();
+                if (serverNicCount <= 0)
+                {
+                    ctrlClient.Close();
+                    throw new InvalidOperationException("服务端未通告任何网络接口。");
+                }
+
+                var advertisedNics = new List<(string Name, IPAddress Address)>();
+                for (int i = 0; i < serverNicCount; i++)
+                {
+                    string nicName = await ctChannel.ReadUTFAsync();
+                    byte ipLen = (byte)ctChannel.BaseStream.ReadByte();
+                    byte[] ipBytes = new byte[ipLen];
+                    await ctChannel.ReadFullyAsync(ipBytes, 0, ipLen);
+                    byte bindFlag = (byte)ctChannel.BaseStream.ReadByte();
+                    advertisedNics.Add((nicName, new IPAddress(ipBytes)));
+                }
+
+                // Step 4: Connect Pure LAN Data Channel
+                ctChannel.WriteBoolean(true); // clientSucceed
+                ctChannel.WriteUTF("LAN");
+                await ctChannel.BaseStream.FlushAsync();
+
+                // Resolve data channel target IP
+                IPAddress dataTargetIp = advertisedNics[0].Address;
+                bool isWildcard = dataTargetIp.Equals(IPAddress.Any) || dataTargetIp.Equals(IPAddress.None);
+                if (isWildcard || IPAddress.TryParse(targetIp, out var parsedIp) && IPAddress.IsLoopback(parsedIp))
+                {
+                    dataTargetIp = IPAddress.Parse(targetIp);
+                }
+
+                var dataClient = new TcpClient
+                {
+                    NoDelay = true,
+                    ReceiveBufferSize = 4 * 1024 * 1024,
+                    SendBufferSize = 4 * 1024 * 1024
+                };
+
+                var dataConnectTask = dataClient.ConnectAsync(dataTargetIp, targetPort);
+                if (await Task.WhenAny(dataConnectTask, Task.Delay(timeoutMs)) != dataConnectTask)
+                {
+                    if (!dataTargetIp.ToString().Equals(targetIp))
                     {
-                        Log("已有设备连接，拒绝新连接。");
-                        client.Close();
-                        continue;
-                    }
-
-                    ConnectedDeviceIP = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
-                    bool handshakeSuccess = await PerformHandshakeAsync(client);
-                    if (handshakeSuccess)
-                    {
-                        Log("设备握手成功，局域网高速传输通道已就绪！");
-                        OnDeviceConnected?.Invoke(ConnectedDeviceIP);
-                        OnStatusChanged?.Invoke($"已连接: {ConnectedDeviceIP}");
-
-                        // Enter RPC control loop to handle mobile client commands
-                        _ = Task.Run(() => ControlLoopAsync(ct));
+                        dataClient.Close();
+                        dataClient = new TcpClient
+                        {
+                            NoDelay = true,
+                            ReceiveBufferSize = 4 * 1024 * 1024,
+                            SendBufferSize = 4 * 1024 * 1024
+                        };
+                        dataConnectTask = dataClient.ConnectAsync(targetIp, targetPort);
+                        if (await Task.WhenAny(dataConnectTask, Task.Delay(timeoutMs)) != dataConnectTask)
+                        {
+                            dataClient.Close();
+                            ctrlClient.Close();
+                            throw new TimeoutException($"连接数据传输通道到 {targetIp}:{targetPort} 超时。");
+                        }
                     }
                     else
                     {
-                        Log("设备握手失败。");
-                        DisconnectCurrentDevice();
+                        dataClient.Close();
+                        ctrlClient.Close();
+                        throw new TimeoutException($"连接数据传输通道到 {dataTargetIp}:{targetPort} 超时。");
                     }
                 }
-                catch (ObjectDisposedException)
-                {
-                    break;
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (SocketException sex) when (sex.SocketErrorCode == SocketError.Interrupted || sex.ErrorCode == 10004 || !_isListening)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    if (_isListening)
-                    {
-                        Log($"连接监听发生异常: {ex.Message}");
-                    }
-                    DisconnectCurrentDevice();
-                }
-            }
-        }
+                await dataConnectTask;
 
-        private async Task<bool> PerformHandshakeAsync(TcpClient client)
-        {
-            try
-            {
-                var stream = client.GetStream();
-                _ctChannel = new QuickShareStream(stream);
-                _controlClient = client;
-
-                // 1. Read header HFXC
-                byte[] header = new byte[4];
-                await _ctChannel.ReadFullyAsync(header, 0, 4);
-                string headerStr = Encoding.UTF8.GetString(header);
-                if (headerStr != QuickShareConstants.CLIENT_HEADER)
+                bool serverAccepted = await ctChannel.ReadBooleanAsync();
+                if (!serverAccepted)
                 {
-                    Log($"非法头部魔数: {headerStr}");
-                    return false;
+                    dataClient.Close();
+                    ctrlClient.Close();
+                    throw new InvalidOperationException("服务端拒绝了数据通道连接。");
                 }
 
-                // 2. Read version
-                int versionCode = await _ctChannel.ReadIntAsync();
-                if (versionCode != QuickShareConstants.VERSION_CODE)
-                {
-                    Log($"协议版本不匹配。客户端版本: {versionCode}, 服务端支持版本: {QuickShareConstants.VERSION_CODE}");
-                    _ctChannel.WriteBoolean(false);
-                    _ctChannel.WriteInt(QuickShareConstants.VERSION_CODE);
-                    await _ctChannel.BaseStream.FlushAsync();
-                    return false;
-                }
-
-                _ctChannel.WriteBoolean(true); // Version matched
-                await _ctChannel.BaseStream.FlushAsync();
-
-                // 3. Advertise 1 primary LAN interface (serverNicCount = 1)
-                string localIp = _networkService.GetPrimaryLanIpAddress();
-                var primaryNic = _networkService.GetPrimaryLanInterface();
-                string nicName = !string.IsNullOrEmpty(primaryNic.Name) ? primaryNic.Name : "LAN";
-
-                _ctChannel.WriteInt(1); // serverNicCount = 1
-                _ctChannel.WriteUTF($"win|{SaveDirectory}|{nicName}");
-                var addrBytes = IPAddress.Parse(localIp).GetAddressBytes();
-                _ctChannel.WriteByte((byte)addrBytes.Length);
-                _ctChannel.BaseStream.Write(addrBytes, 0, addrBytes.Length);
-                _ctChannel.WriteByte(0); // clientBindAddress is null -> 0
-                await _ctChannel.BaseStream.FlushAsync();
-
-                // 4. Accept exactly 1 data socket connection for pure LAN high-speed streaming
                 lock (_connections)
                 {
                     _connections.Clear();
+                    _connections.Add(new TransferConnection("LAN", new QuickShareStream(dataClient.GetStream())));
                 }
-                bool clientSucceed = await _ctChannel.ReadBooleanAsync();
-                string clientInterfaceName = await _ctChannel.ReadUTFAsync();
-
-                if (clientSucceed)
+                lock (_dataClients)
                 {
-                    Log($"等待客户端连接数据传输通道 ({clientInterfaceName})...");
-                    TcpClient transClient = await _listener!.AcceptTcpClientAsync(_cts!.Token);
-                    transClient.NoDelay = true;
-                    transClient.ReceiveBufferSize = 4 * 1024 * 1024;
-                    transClient.SendBufferSize = 4 * 1024 * 1024;
-
-                    lock (_connections)
-                    {
-                        _connections.Add(new TransferConnection(clientInterfaceName, new QuickShareStream(transClient.GetStream())));
-                    }
-                    _ctChannel.WriteBoolean(true);
-                    await _ctChannel.BaseStream.FlushAsync();
-                    Log($"数据传输通道已建立: {clientInterfaceName}");
-                }
-                else
-                {
-                    _ctChannel.WriteBoolean(false);
-                    await _ctChannel.BaseStream.FlushAsync();
-                    return false;
+                    _dataClients.Clear();
+                    _dataClients.Add(dataClient);
                 }
 
-                // 5. Buffer Negotiation (8 blocks of 1MB)
-                int localBufferCount = 8;
-                _ctChannel.WriteInt(localBufferCount);
-                await _ctChannel.BaseStream.FlushAsync();
+                // Step 5: Buffer Negotiation
+                int serverBufCount = await ctChannel.ReadIntAsync();
+                int localPoolSize = serverBufCount > 0 ? serverBufCount : 8;
 
-                bool remoteBufferOk = await _ctChannel.ReadBooleanAsync();
-                if (!remoteBufferOk)
-                {
-                    Log("手机端分配内存缓冲失败。");
-                    return false;
-                }
-
-                // Allocate local 1MB buffers
                 while (_buffers.TryTake(out _)) { }
-                for (int i = 0; i < localBufferCount; i++)
+                for (int i = 0; i < localPoolSize; i++)
                 {
                     _buffers.Add(new byte[FileBlock.BLOCK_SIZE]);
                 }
-                _ctChannel.WriteBoolean(true);
-                await _ctChannel.BaseStream.FlushAsync();
 
-                // 6. Read client file system info
-                RemoteFileSystem = await _ctChannel.ReadIntAsync();
-                RemoteHomeDir = await _ctChannel.ReadUTFAsync();
+                ctChannel.WriteBoolean(true); // client buffer ok
+                await ctChannel.BaseStream.FlushAsync();
 
+                bool serverBufferOk = await ctChannel.ReadBooleanAsync();
+                if (!serverBufferOk)
+                {
+                    ctrlClient.Close();
+                    throw new InvalidOperationException("服务端缓冲区分配失败。");
+                }
+
+                // Step 6: Client File System Info & Save Directory
+                int localFs = QuickShareDirectory.GetCurrentFileSystem();
+                ctChannel.WriteInt(localFs);
+                ctChannel.WriteUTF(SaveDirectory);
+                await ctChannel.BaseStream.FlushAsync();
+
+                // State Initialization
+                _controlClient = ctrlClient;
+                _ctChannel = ctChannel;
+                ConnectedServerIp = targetIp;
+                ConnectedServerPort = targetPort;
+
+                string serverNicName = advertisedNics[0].Name;
+                if (serverNicName.StartsWith("win|", StringComparison.OrdinalIgnoreCase))
+                {
+                    RemoteFileSystem = QuickShareDirectory.FILE_SYSTEM_WINDOWS;
+                    var parts = serverNicName.Split('|');
+                    if (parts.Length >= 2 && !string.IsNullOrWhiteSpace(parts[1]))
+                    {
+                        RemoteHomeDir = parts[1];
+                    }
+                    else
+                    {
+                        RemoteHomeDir = AppConfig.GetDefaultSaveDirectory();
+                    }
+                }
+                else if (serverNicName.Contains("win", StringComparison.OrdinalIgnoreCase))
+                {
+                    RemoteFileSystem = QuickShareDirectory.FILE_SYSTEM_WINDOWS;
+                    RemoteHomeDir = AppConfig.GetDefaultSaveDirectory();
+                }
+                else
+                {
+                    RemoteFileSystem = QuickShareDirectory.FILE_SYSTEM_UNIX;
+                    RemoteHomeDir = "/sdcard/Download";
+                }
+
+                _cts = new CancellationTokenSource();
+                OnConnected?.Invoke(targetIp);
+                OnStatusChanged?.Invoke($"已连接: {targetIp}:{targetPort}");
+                Log($"客户端成功连接至服务端 {targetIp}:{targetPort}，局域网高速传输就绪！");
+
+                // Start background control loop for passive RPC requests from server
+                _ = Task.Run(() => ControlLoopAsync(_cts.Token));
                 return true;
             }
             catch (Exception ex)
             {
-                Log($"握手过程发生错误: {ex.Message}");
-                return false;
+                ctrlClient.Close();
+                Disconnect();
+                OnStatusChanged?.Invoke("连接失败");
+                Log($"连接服务端发生异常: {ex.Message}");
+                throw;
             }
+        }
+
+        public void Disconnect()
+        {
+            _cts?.Cancel();
+
+            if (_ctChannel != null)
+            {
+                try
+                {
+                    _ctChannel.WriteShort(QuickShareConstants.SHUTDOWN);
+                }
+                catch { }
+            }
+
+            _ctChannel?.Close();
+            _ctChannel = null;
+
+            _controlClient?.Close();
+            _controlClient = null;
+
+            lock (_connections)
+            {
+                foreach (var conn in _connections)
+                {
+                    try { conn.Close(); } catch { }
+                }
+                _connections.Clear();
+            }
+
+            lock (_dataClients)
+            {
+                foreach (var client in _dataClients)
+                {
+                    try { client.Close(); } catch { }
+                }
+                _dataClients.Clear();
+            }
+
+            while (_buffers.TryTake(out _)) { }
+
+            ConnectedServerIp = string.Empty;
+            ConnectedServerPort = 0;
+            RemoteFileSystem = QuickShareDirectory.FILE_SYSTEM_UNIX;
+            RemoteHomeDir = string.Empty;
+
+            OnDisconnected?.Invoke();
+            OnStatusChanged?.Invoke("未连接");
         }
 
         private async Task ControlLoopAsync(CancellationToken ct)
@@ -261,7 +313,6 @@ namespace QuickShare.PC.Services
                 {
                     if (_controlClient == null || !_controlClient.Connected) break;
 
-                    // Non-blocking poll with 50ms timeout so server can yield to UI commands
                     if (!_controlClient.Client.Poll(50000, SelectMode.SelectRead))
                     {
                         await Task.Delay(10, ct);
@@ -278,7 +329,7 @@ namespace QuickShare.PC.Services
                             // If socket signaled SelectRead and Available is 0, verify if remote sent FIN (EOF)
                             if (_controlClient.Client.Poll(0, SelectMode.SelectRead))
                             {
-                                Log("客户端已断开控制通道连接。");
+                                Log("服务端已断开连接。");
                                 break;
                             }
                             // Otherwise data was consumed by an active operation running on another thread
@@ -290,7 +341,8 @@ namespace QuickShare.PC.Services
                         switch (opCode)
                         {
                             case QuickShareConstants.SHUTDOWN:
-                                Log("收到客户端断开请求。");
+                                Log("收到服务端断开通知。");
+                                Disconnect();
                                 return;
 
                             case QuickShareConstants.LIST_FILES:
@@ -328,16 +380,11 @@ namespace QuickShare.PC.Services
                 }
                 catch (EndOfStreamException)
                 {
-                    Log("客户端已断开控制通道。");
+                    Log("服务端断开了控制通道。");
                     break;
                 }
                 catch (SocketException sex) when (sex.SocketErrorCode == SocketError.Interrupted || sex.ErrorCode == 10004 ||
                                                   sex.SocketErrorCode == SocketError.ConnectionReset || sex.SocketErrorCode == SocketError.ConnectionAborted)
-                {
-                    // Clean shutdown / disconnect
-                    break;
-                }
-                catch (ObjectDisposedException)
                 {
                     break;
                 }
@@ -345,13 +392,13 @@ namespace QuickShare.PC.Services
                 {
                     if (IsConnected)
                     {
-                        Log($"控制通道已断开: {ex.Message}");
+                        Log($"控制通道处理异常: {ex.Message}");
                     }
                     break;
                 }
             }
 
-            DisconnectCurrentDevice();
+            Disconnect();
         }
 
         private async Task HandleRpcListFilesAsync()
@@ -365,21 +412,13 @@ namespace QuickShare.PC.Services
 
                 if (string.IsNullOrWhiteSpace(path) || path == "/" || path == "\\")
                 {
-                    // List Windows Logical Drives (C:\, D:\, etc.)
                     try
                     {
                         var drives = DriveInfo.GetDrives();
                         foreach (var d in drives)
                         {
                             if (!d.IsReady) continue;
-                            string drivePath = d.RootDirectory.FullName;
-                            fileList.Add(new RemoteFile(
-                                d.Name.TrimEnd('\\'),
-                                drivePath,
-                                0,
-                                d.TotalSize,
-                                true
-                            ));
+                            fileList.Add(new RemoteFile(d.Name.TrimEnd('\\'), d.RootDirectory.FullName, 0, d.TotalSize, true));
                         }
                     }
                     catch { }
@@ -394,24 +433,12 @@ namespace QuickShare.PC.Services
                             foreach (var dir in di.GetDirectories())
                             {
                                 if ((dir.Attributes & FileAttributes.Hidden) != 0 || (dir.Attributes & FileAttributes.System) != 0) continue;
-                                fileList.Add(new RemoteFile(
-                                    dir.Name,
-                                    dir.FullName,
-                                    new DateTimeOffset(dir.LastWriteTimeUtc).ToUnixTimeMilliseconds(),
-                                    0,
-                                    true
-                                ));
+                                fileList.Add(new RemoteFile(dir.Name, dir.FullName, new DateTimeOffset(dir.LastWriteTimeUtc).ToUnixTimeMilliseconds(), 0, true));
                             }
                             foreach (var file in di.GetFiles())
                             {
                                 if ((file.Attributes & FileAttributes.Hidden) != 0 || (file.Attributes & FileAttributes.System) != 0) continue;
-                                fileList.Add(new RemoteFile(
-                                    file.Name,
-                                    file.FullName,
-                                    new DateTimeOffset(file.LastWriteTimeUtc).ToUnixTimeMilliseconds(),
-                                    file.Length,
-                                    false
-                                ));
+                                fileList.Add(new RemoteFile(file.Name, file.FullName, new DateTimeOffset(file.LastWriteTimeUtc).ToUnixTimeMilliseconds(), file.Length, false));
                             }
                         }
                         else
@@ -442,16 +469,7 @@ namespace QuickShare.PC.Services
             }
             catch (Exception ex)
             {
-                Log($"处理列表请求发生异常: {ex.Message}");
-                try
-                {
-                    if (_ctChannel != null)
-                    {
-                        _ctChannel.WriteInt(-1);
-                        await _ctChannel.BaseStream.FlushAsync();
-                    }
-                }
-                catch { }
+                Log($"处理文件列表请求异常: {ex.Message}");
             }
         }
 
@@ -482,7 +500,7 @@ namespace QuickShare.PC.Services
             }
             catch (Exception ex)
             {
-                Log($"处理删除文件请求发生异常: {ex.Message}");
+                Log($"处理删除文件请求异常: {ex.Message}");
             }
         }
 
@@ -507,7 +525,7 @@ namespace QuickShare.PC.Services
             }
             catch (Exception ex)
             {
-                Log($"处理创建文件夹请求发生异常: {ex.Message}");
+                Log($"处理创建文件夹请求异常: {ex.Message}");
             }
         }
 
@@ -523,7 +541,7 @@ namespace QuickShare.PC.Services
             var task = new TransferTask
             {
                 Id = Guid.NewGuid().ToString(),
-                FileName = "接收手机文件",
+                FileName = "接收服务端传输文件",
                 Direction = "接收",
                 Status = "传输中",
                 Size = 0,
@@ -546,6 +564,7 @@ namespace QuickShare.PC.Services
                 {
                     if (task.Size < tot) task.Size = tot;
                     task.BytesTransferred = Math.Min(primaryConn.GetTotalTraffic().DownloadTraffic, task.Size);
+                    task.FileName = Path.GetFileName(path);
                     OnTransferProgress?.Invoke(task);
                 },
                 (iName, traff, ms) => Log($"文件接收完成。已传输 {traff} 字节，耗时 {ms} 毫秒。"),
@@ -599,8 +618,8 @@ namespace QuickShare.PC.Services
                     _ctChannel.WriteBoolean(true); // write ok
                     await _ctChannel.BaseStream.FlushAsync();
 
-                    bool clientCompleteOk = await _ctChannel.ReadBooleanAsync();
-                    if (clientCompleteOk)
+                    bool serverCompleteOk = await _ctChannel.ReadBooleanAsync();
+                    if (serverCompleteOk)
                     {
                         task.Status = "完成";
                         Log("所有文件已成功接收并保存！");
@@ -608,7 +627,7 @@ namespace QuickShare.PC.Services
                     else
                     {
                         task.Status = "失败";
-                        Log("手机端报告发送异常。");
+                        Log("服务端报告传输异常。");
                     }
                 }
             }
@@ -629,8 +648,8 @@ namespace QuickShare.PC.Services
             int count;
             var remotePaths = new List<string>();
             string remoteParentDir;
-            int clientFs;
-            string clientDestDir;
+            int serverFs;
+            string serverDestDir;
 
             try
             {
@@ -641,8 +660,8 @@ namespace QuickShare.PC.Services
                     remotePaths.Add(await _ctChannel.ReadUTFAsync());
                 }
                 remoteParentDir = await _ctChannel.ReadUTFAsync();
-                clientFs = await _ctChannel.ReadIntAsync();
-                clientDestDir = await _ctChannel.ReadUTFAsync();
+                serverFs = await _ctChannel.ReadIntAsync();
+                serverDestDir = await _ctChannel.ReadUTFAsync();
             }
             catch (Exception ex)
             {
@@ -680,9 +699,9 @@ namespace QuickShare.PC.Services
             OnTransferStarted?.Invoke(task);
 
             string localBase = remoteParentDir;
-            int localFs = localBase.Contains(":\\") || localBase.Contains(":/") ? QuickShareDirectory.FILE_SYSTEM_WINDOWS : QuickShareDirectory.GetCurrentFileSystem();
+            int localFs = (localBase.Contains(":\\") || localBase.Contains(":/")) ? QuickShareDirectory.FILE_SYSTEM_WINDOWS : QuickShareDirectory.GetCurrentFileSystem();
             var localDir = new QuickShareDirectory(localBase, localFs);
-            var remoteDir = new QuickShareDirectory(clientDestDir, clientFs);
+            var remoteDir = new QuickShareDirectory(serverDestDir, serverFs);
 
             var readFileCall = new ReadFileCall(_buffers, localFiles, localDir, remoteDir, 1);
             var readTask = Task.Run(() => readFileCall.ExecuteAsync());
@@ -704,33 +723,29 @@ namespace QuickShare.PC.Services
 
             var sendTask = Task.Run(() => sendCall.ExecuteAsync());
 
-            bool clientWriteOk = false;
+            bool serverWriteOk = false;
             try
             {
                 if (_ctChannel != null)
                 {
-                    clientWriteOk = await _ctChannel.ReadBooleanAsync();
+                    serverWriteOk = await _ctChannel.ReadBooleanAsync();
                 }
             }
             catch (Exception ex)
             {
-                Log($"读取手机端写入结果失败: {ex.Message}");
+                Log($"读取控制通道写入反馈异常: {ex.Message}");
             }
 
             speedCts.Cancel();
 
-            if (!clientWriteOk)
+            if (!serverWriteOk)
             {
-                string clientError = "未知错误";
                 try
                 {
-                    if (_ctChannel != null)
-                    {
-                        clientError = await _ctChannel.ReadUTFAsync();
-                    }
+                    string serverErr = _ctChannel != null ? await _ctChannel.ReadUTFAsync() : "未知错误";
+                    Log($"服务端写入文件时发生错误: {serverErr}");
                 }
                 catch { }
-                Log($"手机端写入文件时发生错误: {clientError}");
                 readFileCall.ShutdownByWriteError();
                 task.Status = "失败";
                 OnTransferCompleted?.Invoke(task);
@@ -739,10 +754,10 @@ namespace QuickShare.PC.Services
 
             try
             {
-                bool clientChFinished = false;
+                bool serverChFinished = false;
                 if (_ctChannel != null)
                 {
-                    clientChFinished = await _ctChannel.ReadBooleanAsync();
+                    serverChFinished = await _ctChannel.ReadBooleanAsync();
                 }
 
                 await sendTask;
@@ -750,11 +765,11 @@ namespace QuickShare.PC.Services
 
                 if (_ctChannel != null)
                 {
-                    _ctChannel.WriteBoolean(clientWriteOk && clientChFinished);
+                    _ctChannel.WriteBoolean(serverWriteOk && serverChFinished);
                     await _ctChannel.BaseStream.FlushAsync();
                 }
 
-                task.Status = (clientWriteOk && clientChFinished) ? "完成" : "失败";
+                task.Status = (serverWriteOk && serverChFinished) ? "完成" : "失败";
                 Log("所有文件已发送成功！");
             }
             catch (Exception ex)
@@ -766,47 +781,324 @@ namespace QuickShare.PC.Services
             OnTransferCompleted?.Invoke(task);
         }
 
-        public void DisconnectCurrentDevice()
+        // --- Active Client Transfers ---
+
+        /// <summary>
+        /// Sends local files or directories to the connected remote server endpoint.
+        /// </summary>
+        public async Task<bool> SendFilesAsync(List<string> localPaths, string? remoteDestDir = null, Action<TransferTask>? onProgress = null)
         {
-            if (IsConnected && _ctChannel != null)
-            {
-                try
-                {
-                    _ctChannel.WriteShort(QuickShareConstants.SHUTDOWN);
-                    _ctChannel.BaseStream.Flush();
-                }
-                catch { }
-            }
-
-            _ctChannel?.Close();
-            _ctChannel = null;
-
-            _controlClient?.Close();
-            _controlClient = null;
-
-            TransferConnection[] conns;
+            TransferConnection primaryConn;
             lock (_connections)
             {
-                conns = _connections.ToArray();
-                _connections.Clear();
+                if (!IsConnected || _ctChannel == null || _connections.Count == 0) return false;
+                primaryConn = _connections[0];
             }
 
-            foreach (var conn in conns)
+            var task = new TransferTask
             {
-                try { conn.Close(); } catch { }
+                Id = Guid.NewGuid().ToString(),
+                FileName = localPaths.Count == 1 ? Path.GetFileName(localPaths[0]) : $"{Path.GetFileName(localPaths[0])} 等 {localPaths.Count} 个文件",
+                Direction = "发送",
+                Status = "计算大小中",
+                Size = 0,
+                BytesTransferred = 0
+            };
+
+            OnTransferStarted?.Invoke(task);
+
+            var remoteFiles = new List<RemoteFile>();
+            long totalSize = 0;
+            foreach (var path in localPaths)
+            {
+                if (File.Exists(path))
+                {
+                    var fi = new FileInfo(path);
+                    remoteFiles.Add(new RemoteFile(fi.Name, fi.FullName, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeMilliseconds(), fi.Length, false));
+                    totalSize += fi.Length;
+                }
+                else if (Directory.Exists(path))
+                {
+                    var di = new DirectoryInfo(path);
+                    remoteFiles.Add(new RemoteFile(di.Name, di.FullName, new DateTimeOffset(di.LastWriteTimeUtc).ToUnixTimeMilliseconds(), 0, true));
+                }
             }
 
-            while (_buffers.TryTake(out _)) { }
+            if (remoteFiles.Count == 0)
+            {
+                task.Status = "失败";
+                OnTransferCompleted?.Invoke(task);
+                return false;
+            }
 
-            ConnectedDeviceIP = string.Empty;
-            RemoteFileSystem = 0;
-            RemoteHomeDir = string.Empty;
+            task.Size = totalSize;
+            task.Status = "传输中";
+            OnTransferProgress?.Invoke(task);
 
-            OnDeviceDisconnected?.Invoke();
-            OnStatusChanged?.Invoke(_isListening ? "等待连接" : "已停止");
+            await _controlLock.WaitAsync();
+            try
+            {
+                if (_ctChannel == null) return false;
+                _ctChannel.WriteShort(QuickShareConstants.REQUEST_RECEIVE);
+                await _ctChannel.BaseStream.FlushAsync();
+
+                string localBase = Path.GetDirectoryName(localPaths[0]) ?? "";
+                var localDir = new QuickShareDirectory(localBase, QuickShareDirectory.GetCurrentFileSystem());
+
+                string targetRemoteDest = !string.IsNullOrWhiteSpace(remoteDestDir) ? remoteDestDir : RemoteHomeDir;
+                if (string.IsNullOrWhiteSpace(targetRemoteDest) || targetRemoteDest == "/" || targetRemoteDest == "\\")
+                {
+                    targetRemoteDest = (RemoteFileSystem == QuickShareDirectory.FILE_SYSTEM_WINDOWS) ? AppConfig.GetDefaultSaveDirectory() : "/sdcard/Download";
+                }
+                int destFs = (targetRemoteDest.Contains(":\\") || targetRemoteDest.Contains(":/")) ? QuickShareDirectory.FILE_SYSTEM_WINDOWS : RemoteFileSystem;
+                var remoteDir = new QuickShareDirectory(targetRemoteDest, destFs);
+
+                var readFileCall = new ReadFileCall(_buffers, remoteFiles, localDir, remoteDir, 1);
+                var readTask = Task.Run(() => readFileCall.ExecuteAsync());
+
+                var speedCts = new CancellationTokenSource();
+                var speedTask = Task.Run(() => SpeedMonitorAsync(task, speedCts.Token));
+
+                var sendCall = new SendFileCall(
+                    readFileCall,
+                    primaryConn,
+                    (iName, p, sent, tot) =>
+                    {
+                        task.BytesTransferred = Math.Min(primaryConn.GetTotalTraffic().UploadTraffic, task.Size);
+                        OnTransferProgress?.Invoke(task);
+                        onProgress?.Invoke(task);
+                    },
+                    (iName, traff, ms) => Log($"文件发送完成。已传输 {traff} 字节，耗时 {ms} 毫秒。"),
+                    (iName, code, err) => Log($"传输异常中断. 错误码: {code}, 信息: {err}")
+                );
+
+                var sendTask = Task.Run(() => sendCall.ExecuteAsync());
+
+                bool remoteReceiverOk = false;
+                try
+                {
+                    if (_ctChannel != null)
+                    {
+                        remoteReceiverOk = await _ctChannel.ReadBooleanAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"读取服务端写入反馈失败: {ex.Message}");
+                }
+
+                speedCts.Cancel();
+
+                if (!remoteReceiverOk)
+                {
+                    string error = "服务端接收异常";
+                    if (_ctChannel != null)
+                    {
+                        try { error = await _ctChannel.ReadUTFAsync(); } catch { }
+                    }
+                    Log($"服务端写入文件时发生错误: {error}");
+                    readFileCall.ShutdownByWriteError();
+                    task.Status = "失败";
+                    OnTransferCompleted?.Invoke(task);
+                    return false;
+                }
+
+                try
+                {
+                    await sendTask;
+                    await readTask;
+
+                    if (_ctChannel != null)
+                    {
+                        _ctChannel.WriteBoolean(true); // sender ack
+                        await _ctChannel.BaseStream.FlushAsync();
+                    }
+
+                    task.Status = "完成";
+                    Log("所有文件已发送成功！");
+                    OnTransferCompleted?.Invoke(task);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        if (_ctChannel != null)
+                        {
+                            _ctChannel.WriteBoolean(false);
+                            _ctChannel.WriteUTF(ex.Message);
+                            await _ctChannel.BaseStream.FlushAsync();
+                        }
+                    }
+                    catch { }
+                    task.Status = "失败";
+                    Log($"发送文件发生异常: {ex.Message}");
+                    OnTransferCompleted?.Invoke(task);
+                    return false;
+                }
+            }
+            finally
+            {
+                _controlLock.Release();
+            }
         }
 
-        // --- Commands triggered by PC ---
+        /// <summary>
+        /// Pulls files or directories from the connected remote server endpoint.
+        /// </summary>
+        public async Task<bool> ReceiveFilesAsync(List<string> remotePaths, string remoteParentDir, string? localDestDir = null, Action<TransferTask>? onProgress = null)
+        {
+            TransferConnection primaryConn;
+            lock (_connections)
+            {
+                if (!IsConnected || _ctChannel == null || _connections.Count == 0) return false;
+                primaryConn = _connections[0];
+            }
+
+            string dest = !string.IsNullOrWhiteSpace(localDestDir) ? localDestDir : SaveDirectory;
+            if (!Directory.Exists(dest))
+            {
+                Directory.CreateDirectory(dest);
+            }
+
+            var task = new TransferTask
+            {
+                Id = Guid.NewGuid().ToString(),
+                FileName = remotePaths.Count == 1 ? Path.GetFileName(remotePaths[0]) : $"{Path.GetFileName(remotePaths[0])} 等 {remotePaths.Count} 个文件",
+                Direction = "接收",
+                Status = "传输中",
+                Size = 0,
+                BytesTransferred = 0
+            };
+
+            OnTransferStarted?.Invoke(task);
+
+            await _controlLock.WaitAsync();
+            try
+            {
+                if (_ctChannel == null) return false;
+                _ctChannel.WriteShort(QuickShareConstants.REQUEST_SEND);
+                _ctChannel.WriteInt(remotePaths.Count);
+                foreach (var p in remotePaths)
+                {
+                    _ctChannel.WriteUTF(p);
+                }
+                _ctChannel.WriteUTF(remoteParentDir);
+                _ctChannel.WriteInt(QuickShareDirectory.GetCurrentFileSystem());
+                _ctChannel.WriteUTF(dest);
+                await _ctChannel.BaseStream.FlushAsync();
+
+                var writeFileCall = new WriteFileCall(_buffers, 1, dest);
+                var writeTask = Task.Run(() => writeFileCall.ExecuteAsync());
+
+                var speedCts = new CancellationTokenSource();
+                var speedTask = Task.Run(() => SpeedMonitorAsync(task, speedCts.Token));
+
+                var recvCall = new ReceiveFileCall(
+                    0,
+                    primaryConn,
+                    writeFileCall,
+                    (iName, path, downloaded, tot) =>
+                    {
+                        if (task.Size < tot) task.Size = tot;
+                        task.BytesTransferred = Math.Min(primaryConn.GetTotalTraffic().DownloadTraffic, task.Size);
+                        task.FileName = Path.GetFileName(path);
+                        OnTransferProgress?.Invoke(task);
+                        onProgress?.Invoke(task);
+                    },
+                    (iName, traff, ms) => Log($"文件接收完成。已传输 {traff} 字节，耗时 {ms} 毫秒。"),
+                    (iName, code, err) => Log($"接收异常中断. 错误码: {code}, 信息: {err}")
+                );
+
+                var receiveTask = Task.Run(() => recvCall.ExecuteAsync());
+
+                try
+                {
+                    await writeTask;
+                }
+                catch (Exception ex)
+                {
+                    speedCts.Cancel();
+                    try
+                    {
+                        if (_ctChannel != null)
+                        {
+                            _ctChannel.WriteBoolean(false);
+                            _ctChannel.WriteUTF(ex.Message);
+                            await _ctChannel.BaseStream.FlushAsync();
+                        }
+                    }
+                    catch { }
+                    task.Status = "失败";
+                    Log($"写入本地文件时发生错误: {ex.Message}");
+                    OnTransferCompleted?.Invoke(task);
+                    return false;
+                }
+
+                try
+                {
+                    await receiveTask;
+                }
+                catch (Exception ex)
+                {
+                    speedCts.Cancel();
+                    try
+                    {
+                        if (_ctChannel != null)
+                        {
+                            _ctChannel.WriteBoolean(true); // write ok
+                            _ctChannel.WriteBoolean(false); // receiver failed
+                            await _ctChannel.BaseStream.FlushAsync();
+                        }
+                    }
+                    catch { }
+                    task.Status = "失败";
+                    Log($"接收文件失败: {ex.Message}");
+                    OnTransferCompleted?.Invoke(task);
+                    return false;
+                }
+
+                speedCts.Cancel();
+
+                try
+                {
+                    if (_ctChannel != null)
+                    {
+                        _ctChannel.WriteBoolean(true); // write ok
+                        _ctChannel.WriteBoolean(true); // channel finish ok
+                        await _ctChannel.BaseStream.FlushAsync();
+
+                        bool senderAck = await _ctChannel.ReadBooleanAsync();
+                        if (senderAck)
+                        {
+                            task.Status = "完成";
+                            Log("拉取的文件已成功接收并保存！");
+                        }
+                        else
+                        {
+                            string err = "未知错误";
+                            try { err = await _ctChannel.ReadUTFAsync(); } catch { }
+                            task.Status = "失败";
+                            Log($"服务端报告拉取失败: {err}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    task.Status = "失败";
+                    Log($"读取控制通道拉取反馈失败: {ex.Message}");
+                }
+
+                OnTransferCompleted?.Invoke(task);
+                return task.Status == "完成";
+            }
+            finally
+            {
+                _controlLock.Release();
+            }
+        }
+
+        // --- Remote File Operations ---
 
         public async Task<List<RemoteFile>?> ListRemoteFilesAsync(string path)
         {
@@ -839,7 +1131,7 @@ namespace QuickShare.PC.Services
             }
             catch (Exception ex)
             {
-                Log($"列出远程文件发生异常: {ex.Message}");
+                Log($"列出远程文件异常: {ex.Message}");
                 return null;
             }
             finally
@@ -888,323 +1180,6 @@ namespace QuickShare.PC.Services
             catch
             {
                 return false;
-            }
-            finally
-            {
-                _controlLock.Release();
-            }
-        }
-
-        // --- Pure LAN Single-Stream File Transfers ---
-
-        // Send local files on PC to Remote Phone
-        public async Task SendFilesToRemoteAsync(List<string> localPaths, string remoteDestDir)
-        {
-            TransferConnection primaryConn;
-            lock (_connections)
-            {
-                if (!IsConnected || _ctChannel == null || _connections.Count == 0) return;
-                primaryConn = _connections[0];
-            }
-
-            var task = new TransferTask
-            {
-                Id = Guid.NewGuid().ToString(),
-                FileName = localPaths.Count == 1 ? Path.GetFileName(localPaths[0]) : $"{Path.GetFileName(localPaths[0])} 等 {localPaths.Count} 个文件",
-                Direction = "发送",
-                Status = "计算大小中",
-                Size = 0,
-                BytesTransferred = 0
-            };
-
-            OnTransferStarted?.Invoke(task);
-
-            // Compute total size and collect metadata
-            var remoteFiles = new List<RemoteFile>();
-            long totalSize = 0;
-            foreach (var path in localPaths)
-            {
-                if (File.Exists(path))
-                {
-                    var fi = new FileInfo(path);
-                    remoteFiles.Add(new RemoteFile(fi.Name, fi.FullName, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeMilliseconds(), fi.Length, false));
-                    totalSize += fi.Length;
-                }
-                else if (Directory.Exists(path))
-                {
-                    var di = new DirectoryInfo(path);
-                    remoteFiles.Add(new RemoteFile(di.Name, di.FullName, new DateTimeOffset(di.LastWriteTimeUtc).ToUnixTimeMilliseconds(), 0, true));
-                }
-            }
-
-            task.Size = totalSize;
-            task.Status = "传输中";
-            OnTransferProgress?.Invoke(task);
-
-            // Request client to receive
-            await _controlLock.WaitAsync();
-            try
-            {
-                if (_ctChannel == null) return;
-                _ctChannel.WriteShort(QuickShareConstants.REQUEST_RECEIVE);
-                await _ctChannel.BaseStream.FlushAsync();
-
-                var localDir = new QuickShareDirectory(Path.GetDirectoryName(localPaths[0]) ?? "", QuickShareDirectory.GetCurrentFileSystem());
-                var remoteDir = new QuickShareDirectory(remoteDestDir, RemoteFileSystem);
-
-                var readFileCall = new ReadFileCall(_buffers, remoteFiles, localDir, remoteDir, 1);
-                var readTask = Task.Run(() => readFileCall.ExecuteAsync());
-
-                // Speed Monitor
-                var speedCts = new CancellationTokenSource();
-                var speedTask = Task.Run(() => SpeedMonitorAsync(task, speedCts.Token));
-
-                // Single LAN stream send task
-                var sendCall = new SendFileCall(
-                    readFileCall,
-                    primaryConn,
-                    (iName, p, sent, tot) =>
-                    {
-                        task.BytesTransferred = Math.Min(primaryConn.GetTotalTraffic().UploadTraffic, task.Size);
-                        OnTransferProgress?.Invoke(task);
-                    },
-                    (iName, traff, ms) => Log($"文件发送完成。已传输 {traff} 字节，耗时 {ms} 毫秒。"),
-                    (iName, code, err) => Log($"传输异常中断. 错误码: {code}, 信息: {err}")
-                );
-
-                var sendTask = Task.Run(() => sendCall.ExecuteAsync());
-
-                // Wait for client to write complete or error on control channel
-                bool clientOk = false;
-                try
-                {
-                    if (_ctChannel != null)
-                    {
-                        clientOk = await _ctChannel.ReadBooleanAsync();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log($"读取控制通道写入反馈失败: {ex.Message}");
-                }
-
-                speedCts.Cancel();
-
-                if (!clientOk)
-                {
-                    string clientError = "传输中断或连接断开";
-                    try
-                    {
-                        if (_ctChannel != null)
-                        {
-                            clientError = await _ctChannel.ReadUTFAsync();
-                        }
-                    }
-                    catch
-                    {
-                        clientError = "手机端连接已断开";
-                    }
-                    Log($"手机端写入文件时发生错误: {clientError}");
-                    readFileCall.ShutdownByWriteError();
-                    task.Status = "失败";
-                    OnTransferCompleted?.Invoke(task);
-                    return;
-                }
-
-                try
-                {
-                    await sendTask;
-                    await readTask;
-
-                    if (_ctChannel != null)
-                    {
-                        _ctChannel.WriteBoolean(true);
-                        await _ctChannel.BaseStream.FlushAsync();
-                    }
-
-                    task.Status = "完成";
-                    Log("所有文件已发送成功！");
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        if (_ctChannel != null)
-                        {
-                            _ctChannel.WriteBoolean(false);
-                            _ctChannel.WriteUTF(ex.Message);
-                            await _ctChannel.BaseStream.FlushAsync();
-                        }
-                    }
-                    catch { }
-                    task.Status = "失败";
-                    Log($"发送文件发生异常: {ex.Message}");
-                }
-
-                OnTransferCompleted?.Invoke(task);
-            }
-            finally
-            {
-                _controlLock.Release();
-            }
-        }
-
-        // Pull files from Remote Phone to PC
-        public async Task PullFilesFromRemoteAsync(List<string> remotePaths, string localDestDir)
-        {
-            TransferConnection primaryConn;
-            lock (_connections)
-            {
-                if (!IsConnected || _ctChannel == null || _connections.Count == 0) return;
-                primaryConn = _connections[0];
-            }
-
-            var task = new TransferTask
-            {
-                Id = Guid.NewGuid().ToString(),
-                FileName = remotePaths.Count == 1 ? Path.GetFileName(remotePaths[0]) : $"{Path.GetFileName(remotePaths[0])} 等 {remotePaths.Count} 个文件",
-                Direction = "接收",
-                Status = "初始化中",
-                Size = 0,
-                BytesTransferred = 0
-            };
-
-            OnTransferStarted?.Invoke(task);
-
-            await _controlLock.WaitAsync();
-            try
-            {
-                if (_ctChannel == null) return;
-
-                // 1. Tell client we want to request files (REQUEST_SEND)
-                _ctChannel.WriteShort(QuickShareConstants.REQUEST_SEND);
-                _ctChannel.WriteInt(remotePaths.Count);
-                foreach (var path in remotePaths)
-                {
-                    _ctChannel.WriteUTF(path);
-                }
-
-                // localDir from remote's perspective is localDir (source on phone)
-                string remoteParentDir = Path.GetDirectoryName(remotePaths[0])?.Replace('\\', '/') ?? "/";
-                _ctChannel.WriteUTF(remoteParentDir);
-                _ctChannel.WriteInt(RemoteFileSystem);
-
-                // remoteDir from remote's perspective is remoteDir (destination on PC)
-                _ctChannel.WriteUTF(localDestDir);
-                await _ctChannel.BaseStream.FlushAsync();
-
-                task.Status = "传输中";
-                OnTransferProgress?.Invoke(task);
-
-                var writeFileCall = new WriteFileCall(_buffers, 1, localDestDir ?? SaveDirectory);
-                var writeTask = Task.Run(() => writeFileCall.ExecuteAsync());
-
-                // Speed Monitor
-                var speedCts = new CancellationTokenSource();
-                var speedTask = Task.Run(() => SpeedMonitorAsync(task, speedCts.Token));
-
-                var recvCall = new ReceiveFileCall(
-                    0,
-                    primaryConn,
-                    writeFileCall,
-                    (iName, path, downloaded, tot) =>
-                    {
-                        if (task.Size < tot)
-                        {
-                            task.Size = tot;
-                        }
-                        task.BytesTransferred = Math.Min(primaryConn.GetTotalTraffic().DownloadTraffic, task.Size);
-                        OnTransferProgress?.Invoke(task);
-                    },
-                    (iName, traff, ms) => Log($"文件接收完成。已传输 {traff} 字节，耗时 {ms} 毫秒。"),
-                    (iName, code, err) => Log($"接收异常中断. 错误码: {code}, 信息: {err}")
-                );
-
-                var receiveTask = Task.Run(() => recvCall.ExecuteAsync());
-
-                try
-                {
-                    await writeTask;
-                }
-                catch (Exception ex)
-                {
-                    speedCts.Cancel();
-                    try
-                    {
-                        if (_ctChannel != null)
-                        {
-                            _ctChannel.WriteBoolean(false);
-                            _ctChannel.WriteUTF(ex.Message);
-                            await _ctChannel.BaseStream.FlushAsync();
-                        }
-                    }
-                    catch { }
-                    task.Status = "失败";
-                    Log($"写入本地文件时发生错误: {ex.Message}");
-                    OnTransferCompleted?.Invoke(task);
-                    return;
-                }
-
-                // Wait for receiver to complete
-                try
-                {
-                    await receiveTask;
-                }
-                catch (Exception ex)
-                {
-                    speedCts.Cancel();
-                    try
-                    {
-                        if (_ctChannel != null)
-                        {
-                            _ctChannel.WriteBoolean(true); // write ok
-                            _ctChannel.WriteBoolean(false); // receiver failed
-                            await _ctChannel.BaseStream.FlushAsync();
-                        }
-                    }
-                    catch { }
-                    task.Status = "失败";
-                    Log($"网络通道接收失败: {ex.Message}");
-                    OnTransferCompleted?.Invoke(task);
-                    return;
-                }
-
-                speedCts.Cancel();
-
-                try
-                {
-                    if (_ctChannel != null)
-                    {
-                        _ctChannel.WriteBoolean(true); // write ok
-                        _ctChannel.WriteBoolean(true); // receivers finished ok
-                        await _ctChannel.BaseStream.FlushAsync();
-
-                        bool clientCompleteOk = await _ctChannel.ReadBooleanAsync();
-                        if (clientCompleteOk)
-                        {
-                            task.Status = "完成";
-                            Log("所有文件已成功接收并保存！");
-                        }
-                        else
-                        {
-                            string clientError = "手机端读取错误或已断开";
-                            try
-                            {
-                                clientError = await _ctChannel.ReadUTFAsync();
-                            }
-                            catch { }
-                            task.Status = "失败";
-                            Log($"手机端读取文件发生错误: {clientError}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    task.Status = "失败";
-                    Log($"读取控制通道接收反馈失败: {ex.Message}");
-                }
-
-                OnTransferCompleted?.Invoke(task);
             }
             finally
             {

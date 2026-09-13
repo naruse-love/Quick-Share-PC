@@ -10,6 +10,7 @@ namespace QuickShare.PC.Services
     {
         public const string CLIENT_HEADER = "HFXC";
         public const int VERSION_CODE = 300;
+        public const int DEFAULT_PORT = 5740;
 
         // Controller identifiers
         public const short SHUTDOWN = 0;

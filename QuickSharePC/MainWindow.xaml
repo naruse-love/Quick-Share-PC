@@ -6,8 +6,8 @@
         xmlns:local="clr-namespace:QuickShare.PC"
         xmlns:converters="clr-namespace:QuickShare.PC.Converters"
         mc:Ignorable="d"
-        Title="Quick Share (PC) - 局域网极速快传" Height="750" Width="1120"
-        MinHeight="650" MinWidth="960"
+        Title="Quick Share (PC) - 局域网极速快传" Height="780" Width="1140"
+        MinHeight="680" MinWidth="980"
         Background="#F8FAFC"
         FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, sans-serif"
         WindowStartupLocation="CenterScreen">
@@ -15,6 +15,8 @@
     <Window.Resources>
         <converters:FileSizeConverter x:Key="FileSizeConverter" />
         <converters:StatusColorConverter x:Key="StatusColorConverter" />
+        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter" />
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
         <!-- Card Container Style with Soft Fluent Shadow -->
         <Style TargetType="Border" x:Key="CardStyle">
@@ -142,6 +144,43 @@
             </Setter>
         </Style>
 
+        <!-- Segmented Mode RadioButton Style -->
+        <Style TargetType="RadioButton" x:Key="SegmentedButtonStyle">
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#64748B" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="8"
+                                Padding="12,6"
+                                Margin="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#4F46E5" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                    <Condition Property="IsChecked" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="border" Property="Background" Value="#F1F5F9" />
+                                <Setter Property="Foreground" Value="#0F172A" />
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Modern TabControl Style -->
         <Style TargetType="TabItem">
             <Setter Property="FontSize" Value="13" />
@@ -177,114 +216,226 @@
 
     <Grid Margin="20">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="400" />
+            <ColumnDefinition Width="410" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <!-- Left Column: Controls and Settings -->
+        <!-- Left Column: Mode Switcher, Controls and Settings -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" Grid.Column="0" Margin="0,0,12,0">
             <StackPanel>
-                <!-- Service Status Card -->
-                <Border Style="{StaticResource CardStyle}">
+                <!-- Mode Switcher Card -->
+                <Border Style="{StaticResource CardStyle}" Padding="5" Margin="0,0,0,14" Background="#F1F5F9">
                     <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Text="服务与连接状态" Style="{StaticResource HeaderStyle}" />
-
-                        <!-- Status Badge Pill -->
-                        <Border Grid.Row="1" Background="#F1F5F9" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Ellipse Width="10" Height="10" Fill="{Binding ServerStatusText, Converter={StaticResource StatusColorConverter}}" Margin="0,0,10,0" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="{Binding ServerStatusText}" FontWeight="Bold" FontSize="14" Foreground="#1E293B" VerticalAlignment="Center"/>
-                            </Grid>
-                        </Border>
-
-                        <StackPanel Grid.Row="2" Margin="0,0,0,14">
-                            <Grid Margin="0,3">
-                                <TextBlock Text="📱 远端设备:" FontSize="13" Foreground="#64748B" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding ConnectedDevice, FallbackValue='未连接'}" FontSize="13" FontWeight="SemiBold" Foreground="#1E293B" HorizontalAlignment="Right" />
-                            </Grid>
-                            <Grid Margin="0,3">
-                                <TextBlock Text="🔌 监听端口:" FontSize="13" Foreground="#64748B" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding Port}" FontSize="13" FontWeight="SemiBold" Foreground="#1E293B" HorizontalAlignment="Right" />
-                            </Grid>
-                        </StackPanel>
-
-                        <Button Grid.Row="3" Command="{Binding ToggleServerCommand}">
-                            <Button.Style>
-                                <Style TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsServerRunning}" Value="True">
-                                            <Setter Property="Background" Value="#EF4444" />
-                                            <Setter Property="Content" Value="⏹️ 停止服务" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsServerRunning}" Value="False">
-                                            <Setter Property="Background" Value="#4F46E5" />
-                                            <Setter Property="Content" Value="▶️ 启动服务" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <RadioButton Grid.Column="0"
+                                     Content="🖥️ 服务端模式"
+                                     IsChecked="{Binding IsServerMode, Mode=TwoWay}"
+                                     GroupName="AppModeGroup"
+                                     Style="{StaticResource SegmentedButtonStyle}" />
+                        <RadioButton Grid.Column="1"
+                                     Content="📱 客户端模式"
+                                     IsChecked="{Binding IsClientMode, Mode=TwoWay}"
+                                     GroupName="AppModeGroup"
+                                     Style="{StaticResource SegmentedButtonStyle}" />
                     </Grid>
                 </Border>
 
-                <!-- Network Status Card -->
-                <Border Style="{StaticResource CardStyle}">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+                <!-- ==================== SERVER MODE SECTION ==================== -->
+                <StackPanel Visibility="{Binding IsServerMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <!-- Service Status Card -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="网络配置信息" Style="{StaticResource HeaderStyle}" />
+                            <TextBlock Grid.Row="0" Text="服务与连接状态" Style="{StaticResource HeaderStyle}" />
 
-                        <!-- IP Highlight Box -->
-                        <Border Grid.Row="1" Background="#EEF2FF" BorderBrush="#C7D2FE" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,12">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                    <TextBlock Text="📡 本机局域网 LAN IP" FontSize="11" FontWeight="SemiBold" Foreground="#4F46E5" Margin="0,0,0,4" />
-                                    <TextBlock Text="{Binding PrimaryLanIp}" FontSize="17" FontWeight="Bold" Foreground="#312E81" FontFamily="Consolas, Segoe UI" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Command="{Binding CopyIpCommand}" Content="复制 IP" Style="{StaticResource SecondaryButtonStyle}" Height="30" Padding="10,3" VerticalAlignment="Center" ToolTip="复制 IP 到剪贴板" />
-                            </Grid>
-                        </Border>
-
-                        <!-- Network Details -->
-                        <StackPanel Grid.Row="2" Margin="0,0,0,12">
-                            <Grid Margin="0,3">
-                                <TextBlock Text="网络类型:" FontSize="12.5" Foreground="#64748B" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding PrimaryNetworkType}" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Right" />
-                            </Grid>
-                            <Grid Margin="0,3">
-                                <TextBlock Text="网卡适配器:" FontSize="12.5" Foreground="#64748B" HorizontalAlignment="Left" />
-                                <TextBlock Text="{Binding PrimaryAdapterName}" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" MaxWidth="210" />
-                            </Grid>
-                            <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,8,0,0">
-                                <TextBlock Text="💡 提示: 手机端「客户端连接」中输入上方 IP 和端口即可高速互传" FontSize="11.5" Foreground="#475569" TextWrapping="Wrap" LineHeight="16" />
+                            <!-- Status Badge Pill -->
+                            <Border Grid.Row="1" Background="#F1F5F9" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse Width="10" Height="10" Fill="{Binding ServerStatusText, Converter={StaticResource StatusColorConverter}}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ServerStatusText}" FontWeight="Bold" FontSize="14" Foreground="#1E293B" VerticalAlignment="Center"/>
+                                </Grid>
                             </Border>
-                        </StackPanel>
 
-                        <Button Grid.Row="3" Content="🔄 刷新网络状态" Command="{Binding RefreshInterfacesCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="34" />
-                    </Grid>
-                </Border>
+                            <StackPanel Grid.Row="2" Margin="0,0,0,14">
+                                <Grid Margin="0,3">
+                                    <TextBlock Text="📱 远端设备:" FontSize="13" Foreground="#64748B" HorizontalAlignment="Left" />
+                                    <TextBlock Text="{Binding ConnectedDevice, FallbackValue='未连接'}" FontSize="13" FontWeight="SemiBold" Foreground="#1E293B" HorizontalAlignment="Right" />
+                                </Grid>
+                                <Grid Margin="0,3">
+                                    <TextBlock Text="🔌 监听端口:" FontSize="13" Foreground="#64748B" HorizontalAlignment="Left" />
+                                    <TextBlock Text="{Binding Port}" FontSize="13" FontWeight="SemiBold" Foreground="#1E293B" HorizontalAlignment="Right" />
+                                </Grid>
+                            </StackPanel>
 
-                <!-- Settings Card -->
+                            <Button Grid.Row="3" Command="{Binding ToggleServerCommand}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsServerRunning}" Value="True">
+                                                <Setter Property="Background" Value="#EF4444" />
+                                                <Setter Property="Content" Value="⏹️ 停止服务" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsServerRunning}" Value="False">
+                                                <Setter Property="Background" Value="#4F46E5" />
+                                                <Setter Property="Content" Value="▶️ 启动服务" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <!-- Network Status Card -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="本机网络信息" Style="{StaticResource HeaderStyle}" />
+
+                            <!-- IP Highlight Box -->
+                            <Border Grid.Row="1" Background="#EEF2FF" BorderBrush="#C7D2FE" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="📡 本机局域网 LAN IP" FontSize="11" FontWeight="SemiBold" Foreground="#4F46E5" Margin="0,0,0,4" />
+                                        <TextBlock Text="{Binding PrimaryLanIp}" FontSize="17" FontWeight="Bold" Foreground="#312E81" FontFamily="Consolas, Segoe UI" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Command="{Binding CopyIpCommand}" Content="复制 IP" Style="{StaticResource SecondaryButtonStyle}" Height="30" Padding="10,3" VerticalAlignment="Center" ToolTip="复制 IP 到剪贴板" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Network Details -->
+                            <StackPanel Grid.Row="2" Margin="0,0,0,12">
+                                <Grid Margin="0,3">
+                                    <TextBlock Text="网络类型:" FontSize="12.5" Foreground="#64748B" HorizontalAlignment="Left" />
+                                    <TextBlock Text="{Binding PrimaryNetworkType}" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Right" />
+                                </Grid>
+                                <Grid Margin="0,3">
+                                    <TextBlock Text="网卡适配器:" FontSize="12.5" Foreground="#64748B" HorizontalAlignment="Left" />
+                                    <TextBlock Text="{Binding PrimaryAdapterName}" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" MaxWidth="220" />
+                                </Grid>
+                                <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,8,0,0">
+                                    <TextBlock Text="💡 提示: 手机端「客户端模式」中输入上方 IP 和端口即可秒级接入互传" FontSize="11.5" Foreground="#475569" TextWrapping="Wrap" LineHeight="16" />
+                                </Border>
+                            </StackPanel>
+
+                            <Button Grid.Row="3" Content="🔄 刷新网络状态" Command="{Binding RefreshInterfacesCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="34" />
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- ==================== CLIENT MODE SECTION ==================== -->
+                <StackPanel Visibility="{Binding IsClientMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <!-- Client Connection Card -->
+                    <Border Style="{StaticResource CardStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="连接远程服务端" Style="{StaticResource HeaderStyle}" />
+
+                            <!-- Status Badge Pill -->
+                            <Border Grid.Row="1" Background="#F1F5F9" CornerRadius="8" Padding="12,10" Margin="0,0,0,14">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse Width="10" Height="10" Fill="{Binding ClientStatusText, Converter={StaticResource StatusColorConverter}}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ClientStatusText}" FontWeight="Bold" FontSize="14" Foreground="#1E293B" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- Endpoint Inputs -->
+                            <StackPanel Grid.Row="2" Margin="0,0,0,14">
+                                <TextBlock Text="🎯 目标服务端 IP 地址:" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" Margin="0,0,0,4" />
+                                <TextBox Text="{Binding TargetIp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding IsClientConnected, Converter={StaticResource InverseBooleanConverter}}"
+                                         Style="{StaticResource ModernTextBoxStyle}" Height="34" Margin="0,0,0,10" />
+
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="100" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="🔌 目标服务端口:" VerticalAlignment="Center" FontSize="12.5" FontWeight="SemiBold" Foreground="#334155" />
+                                    <TextBox Grid.Column="1" Text="{Binding TargetPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             IsEnabled="{Binding IsClientConnected, Converter={StaticResource InverseBooleanConverter}}"
+                                             HorizontalContentAlignment="Center" Style="{StaticResource ModernTextBoxStyle}" Height="32" />
+                                </Grid>
+
+                                <!-- Connected Info Card -->
+                                <Border Background="#EEF2FF" BorderBrush="#C7D2FE" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,8,0,0"
+                                        Visibility="{Binding IsClientConnected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <Grid Margin="0,2">
+                                            <TextBlock Text="📱 远端设备系统:" FontSize="12" Foreground="#4F46E5" FontWeight="SemiBold" HorizontalAlignment="Left" />
+                                            <TextBlock Text="{Binding ClientRemoteFs}" FontSize="12" FontWeight="Bold" Foreground="#312E81" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Grid Margin="0,2">
+                                            <TextBlock Text="📁 远端默认目录:" FontSize="12" Foreground="#4F46E5" FontWeight="SemiBold" HorizontalAlignment="Left" />
+                                            <TextBlock Text="{Binding ClientRemoteHomeDir}" FontSize="12" FontWeight="SemiBold" Foreground="#312E81" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" MaxWidth="190" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,8,0,0">
+                                    <TextBlock Text="💡 提示: 对方设备（手机或另一台电脑）开启「服务端模式」后，在此输入其屏幕显示的 IP 和端口即可连接" FontSize="11.5" Foreground="#475569" TextWrapping="Wrap" LineHeight="16" />
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Connect / Disconnect Action Button -->
+                            <Button Grid.Row="3" Command="{Binding ToggleClientConnectionCommand}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsClientConnected}" Value="True">
+                                                <Setter Property="Background" Value="#EF4444" />
+                                                <Setter Property="Content" Value="⏹️ 断开连接" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsClientConnected}" Value="False">
+                                                <Setter Property="Background" Value="#4F46E5" />
+                                                <Setter Property="Content" Value="🔗 连接服务端" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsClientConnecting}" Value="True">
+                                                <Setter Property="IsEnabled" Value="False" />
+                                                <Setter Property="Content" Value="⏳ 正在连接..." />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- ==================== SHARED SETTINGS SECTION ==================== -->
                 <Border Style="{StaticResource CardStyle}">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -310,18 +461,18 @@
                             <Button Content="📂 打开此目录" Command="{Binding OpenSaveDirCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="30" Margin="0,6,0,0" />
                         </StackPanel>
 
-                        <!-- Port -->
+                        <!-- Server Listen Port (Only relevant in server mode) -->
                         <Grid Grid.Row="2" Margin="0,0,0,14">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="90" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="🔌 监听端口" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Foreground="#334155" />
+                            <TextBlock Text="🔌 本机服务端监听端口" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Foreground="#334155" />
                             <TextBox Text="{Binding Port, Mode=TwoWay}" HorizontalContentAlignment="Center" Style="{StaticResource ModernTextBoxStyle}" Grid.Column="1" Height="32" />
                         </Grid>
 
                         <!-- Auto Start -->
-                        <CheckBox Grid.Row="3" IsChecked="{Binding AutoStart, Mode=TwoWay}" Content="🚀 开机自动启动服务端 (托盘运行)" FontSize="12.5" Foreground="#334155" VerticalAlignment="Center" />
+                        <CheckBox Grid.Row="3" IsChecked="{Binding AutoStart, Mode=TwoWay}" Content="🚀 开机自动启动 (托盘运行)" FontSize="12.5" Foreground="#334155" VerticalAlignment="Center" />
                     </Grid>
                 </Border>
             </StackPanel>
@@ -349,9 +500,12 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="📥 拖拽文件或文件夹到此处直接发送到手机" FontSize="14.5" FontWeight="Bold" Foreground="#4338CA" HorizontalAlignment="Center" Margin="0,0,0,4" />
-                    <TextBlock Grid.Row="1" Text="支持任意格式与大文件直接局域网极速直传" FontSize="12" Foreground="#64748B" HorizontalAlignment="Center" Margin="0,0,0,10" />
-                    <Button Grid.Row="2" Content="📂 选择文件 / 文件夹并发送" Command="{Binding SelectAndSendFilesCommand}" Style="{StaticResource PrimaryButtonStyle}" Height="34" Width="220" HorizontalAlignment="Center" />
+                    <TextBlock Grid.Row="0" Text="📥 拖拽文件或文件夹到此处直接发送" FontSize="14.5" FontWeight="Bold" Foreground="#4338CA" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                    <TextBlock Grid.Row="1" Text="{Binding ActiveConnectedStatus}" FontSize="12" Foreground="#64748B" HorizontalAlignment="Center" Margin="0,0,0,10" />
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button Content="📄 选择文件发送" Command="{Binding SelectAndSendFilesCommand}" Style="{StaticResource PrimaryButtonStyle}" Height="34" Width="140" Margin="0,0,10,0" />
+                        <Button Content="📁 选择文件夹发送" Command="{Binding SelectAndSendFolderCommand}" Style="{StaticResource SecondaryButtonStyle}" Height="34" Width="140" />
+                    </StackPanel>
                 </Grid>
             </Border>
 

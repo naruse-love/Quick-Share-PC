@@ -11,6 +11,7 @@ namespace QuickShare.PC
     {
         private Mutex? _singleInstanceMutex;
         private QuickShareServer? _server;
+        private QuickShareClient? _client;
         private TrayService? _trayService;
         private MainViewModel? _viewModel;
         private bool _isExiting = false;
@@ -36,7 +37,7 @@ namespace QuickShare.PC
             _singleInstanceMutex = new Mutex(true, "QuickShareServerMutex", out bool createdNew);
             if (!createdNew)
             {
-                MessageBox.Show("Quick Share 服务端已在运行中！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Quick Share 客户端/服务端已在运行中！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
                 Shutdown();
                 return;
             }
@@ -46,11 +47,12 @@ namespace QuickShare.PC
 
             // Initialize Services
             _server = new QuickShareServer();
+            _client = new QuickShareClient();
             var configService = new ConfigService();
             var networkService = new NetworkService();
 
             // Initialize ViewModel
-            _viewModel = new MainViewModel(_server, configService, networkService);
+            _viewModel = new MainViewModel(_server, configService, networkService, _client);
 
             // Create MainWindow
             var mainWindow = new MainWindow
@@ -77,7 +79,7 @@ namespace QuickShare.PC
                 {
                     ev.Cancel = true;
                     _trayService.HideWindow();
-                    _trayService.ShowNotification("已最小化到托盘", "Quick Share 服务端仍在后台运行。");
+                    _trayService.ShowNotification("已最小化到托盘", "Quick Share 仍在后台运行。");
                 }
             };
 
@@ -92,9 +94,9 @@ namespace QuickShare.PC
                 _trayService.ShowWindow();
             }
 
-            // Auto-start server if configured
+            // Auto-start server if configured and in Server Mode
             var config = configService.LoadConfig();
-            if (config.AutoStartServer)
+            if (!config.IsClientMode && config.AutoStartServer)
             {
                 _viewModel.ToggleServer();
             }
@@ -120,6 +122,13 @@ namespace QuickShare.PC
             {
                 _trayService?.Dispose();
                 _trayService = null;
+            }
+            catch { }
+
+            try
+            {
+                _client?.Disconnect();
+                _client = null;
             }
             catch { }
 

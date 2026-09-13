@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -65,6 +66,18 @@ namespace QuickShare.PC.EmpiricalTests
 
                 // Group 7: End-to-End Loopback Transfer Simulation
                 await RunTestAsync("E2E_SimulatedFileTransferOverSingleSocket", TestE2ESimulatedFileTransfer);
+
+                // Group 8: QuickShareClient Verification & Dual-Mode Interop
+                await RunTestAsync("QuickShareClient_FullHandshakeAndConnectedState", TestQuickShareClientHandshake);
+                await RunTestAsync("QuickShareClient_SendFilesToServer", TestQuickShareClientSendFiles);
+                await RunTestAsync("QuickShareClient_ReceiveFilesFromServer", TestQuickShareClientReceiveFiles);
+                await RunTestAsync("QuickShareClient_ServerPushToClient", TestQuickShareClientServerPush);
+                await RunTestAsync("QuickShareClient_ServerPullFromClient", TestQuickShareClientServerPull);
+                await RunTestAsync("QuickShareClient_ConsecutiveBidirectionalTransfersOnSameConnection", TestQuickShareClientConsecutiveTransfers);
+                await RunTestAsync("QuickShareClient_NestedDirectoryTransferAndTimestampPreservation", TestQuickShareClientNestedDirectoryTransfer);
+                await RunTestAsync("QuickShareClient_ListRemoteFiles", TestQuickShareClientListRemoteFiles);
+                await RunTestAsync("QuickShareClient_RejectVersionMismatch", TestQuickShareClientVersionMismatch);
+                await RunTestAsync("QuickShareClient_AbruptDisconnectAndCleanup", TestQuickShareClientAbruptDisconnect);
             }
             catch (Exception ex)
             {
@@ -554,7 +567,7 @@ namespace QuickShare.PC.EmpiricalTests
 
         private static async Task TestQuickShareServerHandshake()
         {
-            int testPort = 58491;
+            int testPort = GetAvailablePort();
             var server = new QuickShareServer();
             server.Start(testPort);
 
@@ -649,7 +662,7 @@ namespace QuickShare.PC.EmpiricalTests
 
         private static async Task TestQuickShareServerRejectSecondConnection()
         {
-            int testPort = 58492;
+            int testPort = GetAvailablePort();
             var server = new QuickShareServer();
             server.Start(testPort);
 
@@ -713,7 +726,7 @@ namespace QuickShare.PC.EmpiricalTests
 
         private static async Task TestQuickShareServerRejectInvalidMagic()
         {
-            int testPort = 58493;
+            int testPort = GetAvailablePort();
             var server = new QuickShareServer();
             server.Start(testPort);
 
@@ -738,7 +751,7 @@ namespace QuickShare.PC.EmpiricalTests
 
         private static async Task TestQuickShareServerRejectInvalidVersion()
         {
-            int testPort = 58494;
+            int testPort = GetAvailablePort();
             var server = new QuickShareServer();
             server.Start(testPort);
 
@@ -768,7 +781,7 @@ namespace QuickShare.PC.EmpiricalTests
 
         private static async Task TestQuickShareServerDisconnectCleanup()
         {
-            int testPort = 58495;
+            int testPort = GetAvailablePort();
             var server = new QuickShareServer();
             server.Start(testPort);
 
@@ -1052,6 +1065,509 @@ namespace QuickShare.PC.EmpiricalTests
             string deepUnixPath = "/storage/emulated/0/Download/a/b/c/file.pdf";
             string outWin = reverseUnix.GenerateTransferPath(deepUnixPath, reverseWin);
             Assert(outWin == @"D:\Data\Transfer\a\b\c\file.pdf", $"Reverse path mismatch: got {outWin}");
+        }
+
+        // ====================================================================
+        // Group 8: QuickShareClient Tests & Interoperability
+        // ====================================================================
+
+        private static int GetAvailablePort()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            return port;
+        }
+
+        private static async Task TestQuickShareClientHandshake()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+
+            try
+            {
+                bool connected = await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(connected, "ConnectAsync should return true");
+                Assert(client.IsConnected, "client.IsConnected must be true");
+                Assert(client.ConnectedServerIp == "127.0.0.1", $"IP mismatch: {client.ConnectedServerIp}");
+                Assert(client.ConnectedServerPort == testPort, $"Port mismatch: {client.ConnectedServerPort}");
+                Assert(server.IsConnected, "server.IsConnected must be true");
+
+                client.Disconnect();
+                Assert(!client.IsConnected, "client.IsConnected must be false after Disconnect");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+            }
+        }
+
+        private static async Task TestQuickShareClientSendFiles()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            server.Start(testPort);
+
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSServerSave_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSClientSend_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+            server.SaveDirectory = serverDir;
+
+            var client = new QuickShareClient();
+
+            try
+            {
+                // Create a 2.5MB test file to test multi-block streaming
+                string srcFile = Path.Combine(clientDir, "test_client_upload.bin");
+                byte[] data = new byte[2621440];
+                new Random(12345).NextBytes(data);
+                File.WriteAllBytes(srcFile, data);
+
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client must be connected");
+
+                bool success = await client.SendFilesAsync(new List<string> { srcFile }, serverDir);
+                Assert(success, "SendFilesAsync should succeed");
+
+                await Task.Delay(100);
+
+                string receivedFile = Path.Combine(serverDir, "test_client_upload.bin");
+                Assert(File.Exists(receivedFile), $"Server did not receive file at {receivedFile}");
+
+                byte[] receivedData = File.ReadAllBytes(receivedFile);
+                Assert(receivedData.Length == data.Length, $"Data length mismatch: {receivedData.Length} != {data.Length}");
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (data[i] != receivedData[i])
+                    {
+                        throw new Exception($"Data mismatch at byte offset {i}");
+                    }
+                }
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientReceiveFiles()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            server.Start(testPort);
+
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSServerData_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSClientRecv_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+
+            try
+            {
+                // Create a 1.2MB test file on server
+                string serverFile = Path.Combine(serverDir, "test_client_pull.bin");
+                byte[] data = new byte[1258291];
+                new Random(54321).NextBytes(data);
+                File.WriteAllBytes(serverFile, data);
+
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client must be connected");
+
+                bool success = await client.ReceiveFilesAsync(new List<string> { serverFile }, serverDir, clientDir);
+                Assert(success, "ReceiveFilesAsync should succeed");
+
+                await Task.Delay(100);
+
+                string receivedFile = Path.Combine(clientDir, "test_client_pull.bin");
+                Assert(File.Exists(receivedFile), $"Client did not receive pulled file at {receivedFile}");
+
+                byte[] receivedData = File.ReadAllBytes(receivedFile);
+                Assert(receivedData.Length == data.Length, $"Pulled data length mismatch: {receivedData.Length} != {data.Length}");
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (data[i] != receivedData[i])
+                    {
+                        throw new Exception($"Data mismatch at byte offset {i}");
+                    }
+                }
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientServerPush()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            server.Start(testPort);
+
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSServerSrc_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSClientDest_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+
+            try
+            {
+                // Create file on server to push to client
+                string serverFile = Path.Combine(serverDir, "server_push.bin");
+                byte[] data = new byte[524288]; // 512KB
+                new Random(9999).NextBytes(data);
+                File.WriteAllBytes(serverFile, data);
+
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client must be connected");
+
+                // Server pushes to client
+                await server.SendFilesToRemoteAsync(new List<string> { serverFile }, clientDir);
+
+                await Task.Delay(100);
+
+                string receivedFile = Path.Combine(clientDir, "server_push.bin");
+                Assert(File.Exists(receivedFile), $"Client did not receive pushed file at {receivedFile}");
+
+                byte[] receivedData = File.ReadAllBytes(receivedFile);
+                Assert(receivedData.Length == data.Length, $"Data length mismatch: {receivedData.Length} != {data.Length}");
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (data[i] != receivedData[i])
+                    {
+                        throw new Exception($"Data mismatch at byte offset {i}");
+                    }
+                }
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientServerPull()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSServerPullDst_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSClientPullSrc_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+            server.SaveDirectory = serverDir;
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+
+            try
+            {
+                // Create file on client to be pulled by server
+                string clientFile = Path.Combine(clientDir, "client_pull_target.bin");
+                byte[] data = new byte[768000]; // 750KB
+                new Random(8888).NextBytes(data);
+                File.WriteAllBytes(clientFile, data);
+
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client must be connected");
+
+                // Server pulls from client
+                await server.PullFilesFromRemoteAsync(new List<string> { clientFile }, serverDir);
+
+                await Task.Delay(100);
+
+                string receivedFile = Path.Combine(serverDir, "client_pull_target.bin");
+                Assert(File.Exists(receivedFile), $"Server did not receive pulled file at {receivedFile}");
+
+                byte[] receivedData = File.ReadAllBytes(receivedFile);
+                Assert(receivedData.Length == data.Length, $"Data length mismatch: {receivedData.Length} != {data.Length}");
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (data[i] != receivedData[i])
+                    {
+                        throw new Exception($"Data mismatch at byte offset {i}");
+                    }
+                }
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientConsecutiveTransfers()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSServerMulti_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSClientMulti_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+            server.SaveDirectory = serverDir;
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+
+            try
+            {
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client must be connected");
+
+                // 1. Client push to Server
+                string f1 = Path.Combine(clientDir, "multi_1_c2s.bin");
+                byte[] d1 = new byte[102400];
+                new Random(111).NextBytes(d1);
+                File.WriteAllBytes(f1, d1);
+                bool ok1 = await client.SendFilesAsync(new List<string> { f1 }, serverDir);
+                Assert(ok1, "Multi step 1 (Client push) should succeed");
+                Assert(File.Exists(Path.Combine(serverDir, "multi_1_c2s.bin")), "Server should have multi_1_c2s.bin");
+
+                // 2. Server pull from Client
+                string f2 = Path.Combine(clientDir, "multi_2_c2s_pull.bin");
+                byte[] d2 = new byte[150000];
+                new Random(222).NextBytes(d2);
+                File.WriteAllBytes(f2, d2);
+                await server.PullFilesFromRemoteAsync(new List<string> { f2 }, serverDir);
+                Assert(File.Exists(Path.Combine(serverDir, "multi_2_c2s_pull.bin")), "Server should have multi_2_c2s_pull.bin");
+
+                // 3. Server push to Client
+                string f3 = Path.Combine(serverDir, "multi_3_s2c.bin");
+                byte[] d3 = new byte[204800];
+                new Random(333).NextBytes(d3);
+                File.WriteAllBytes(f3, d3);
+                await server.SendFilesToRemoteAsync(new List<string> { f3 }, clientDir);
+                Assert(File.Exists(Path.Combine(clientDir, "multi_3_s2c.bin")), "Client should have multi_3_s2c.bin");
+
+                // 4. Client pull from Server
+                string f4 = Path.Combine(serverDir, "multi_4_s2c_pull.bin");
+                byte[] d4 = new byte[256000];
+                new Random(444).NextBytes(d4);
+                File.WriteAllBytes(f4, d4);
+                bool ok4 = await client.ReceiveFilesAsync(new List<string> { f4 }, serverDir, clientDir);
+                Assert(ok4, "Multi step 4 (Client pull) should succeed");
+                Assert(File.Exists(Path.Combine(clientDir, "multi_4_s2c_pull.bin")), "Client should have multi_4_s2c_pull.bin");
+
+                // 5. RPC List Remote Files on same active connection
+                var remoteFiles = await client.ListRemoteFilesAsync(serverDir);
+                Assert(remoteFiles != null && remoteFiles.Count >= 4, "RPC ListRemoteFiles on persistent connection should return all files");
+
+                // 6. RPC Create Remote Dir on same active connection
+                bool mkOk = await client.CreateRemoteDirAsync(serverDir, "sub_created_by_client");
+                Assert(mkOk, "RPC CreateRemoteDir on persistent connection should succeed");
+                Assert(Directory.Exists(Path.Combine(serverDir, "sub_created_by_client")), "Created remote directory should exist");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientNestedDirectoryTransfer()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSServerDirDst_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSClientDirSrc_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+            server.SaveDirectory = serverDir;
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+
+            try
+            {
+                // Create nested tree: clientDir/rootFolder/subFolder/nested.bin
+                string rootFolder = Path.Combine(clientDir, "rootFolder");
+                string subFolder = Path.Combine(rootFolder, "subFolder");
+                Directory.CreateDirectory(subFolder);
+
+                string rootFile = Path.Combine(rootFolder, "root.txt");
+                File.WriteAllText(rootFile, "Hello from root level!");
+
+                string nestedFile = Path.Combine(subFolder, "nested.bin");
+                byte[] nestedData = new byte[65536];
+                new Random(7777).NextBytes(nestedData);
+                File.WriteAllBytes(nestedFile, nestedData);
+
+                // Set past timestamps to verify preservation
+                var expectedTime = new DateTime(2023, 5, 10, 14, 30, 0, DateTimeKind.Utc);
+                File.SetLastWriteTimeUtc(rootFile, expectedTime);
+                File.SetLastWriteTimeUtc(nestedFile, expectedTime);
+                Directory.SetLastWriteTimeUtc(subFolder, expectedTime);
+                Directory.SetLastWriteTimeUtc(rootFolder, expectedTime);
+
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client must be connected");
+
+                // Send folder from Client to Server
+                bool sendOk = await client.SendFilesAsync(new List<string> { rootFolder }, serverDir);
+                Assert(sendOk, "Send nested directory should succeed");
+
+                await Task.Delay(200);
+
+                string destRoot = Path.Combine(serverDir, "rootFolder");
+                string destSub = Path.Combine(destRoot, "subFolder");
+                string destRootFile = Path.Combine(destRoot, "root.txt");
+                string destNestedFile = Path.Combine(destSub, "nested.bin");
+
+                Assert(Directory.Exists(destRoot), $"Root folder not created at {destRoot}");
+                Assert(Directory.Exists(destSub), $"Sub folder not created at {destSub}");
+                Assert(File.Exists(destRootFile), $"Root file not created at {destRootFile}");
+                Assert(File.Exists(destNestedFile), $"Nested file not created at {destNestedFile}");
+
+                byte[] recvNested = File.ReadAllBytes(destNestedFile);
+                Assert(recvNested.Length == nestedData.Length, "Nested file length mismatch");
+
+                // Verify timestamps preserved within reasonable margin (3 seconds)
+                var actualFileTime = File.GetLastWriteTimeUtc(destRootFile);
+                Assert(Math.Abs((actualFileTime - expectedTime).TotalSeconds) < 3, $"Root file timestamp mismatch: {actualFileTime} vs {expectedTime}");
+
+                var actualDirTime = Directory.GetLastWriteTimeUtc(destSub);
+                Assert(Math.Abs((actualDirTime - expectedTime).TotalSeconds) < 3, $"Sub directory timestamp mismatch: {actualDirTime} vs {expectedTime}");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientListRemoteFiles()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            server.Start(testPort);
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "QSRemoteList_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            File.WriteAllText(Path.Combine(tempDir, "file1.txt"), "Hello 1");
+            File.WriteAllText(Path.Combine(tempDir, "file2.txt"), "Hello 2");
+            File.WriteAllText(Path.Combine(tempDir, "file3.txt"), "Hello 3");
+
+            var client = new QuickShareClient();
+
+            try
+            {
+                await client.ConnectAsync("127.0.0.1", testPort);
+                var list = await client.ListRemoteFilesAsync(tempDir);
+
+                Assert(list != null, "Remote file list should not be null");
+                Assert(list!.Count == 3, $"Expected 3 files, got {list!.Count}");
+
+                var names = new HashSet<string>(list!.Select(f => f.Name));
+                Assert(names.Contains("file1.txt") && names.Contains("file2.txt") && names.Contains("file3.txt"), "All files should be present in listing");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestQuickShareClientVersionMismatch()
+        {
+            int testPort = GetAvailablePort();
+            var mockListener = new TcpListener(IPAddress.Loopback, testPort);
+            mockListener.Start();
+
+            var mockServerTask = Task.Run(async () =>
+            {
+                using var socket = await mockListener.AcceptTcpClientAsync();
+                var stream = new QuickShareStream(socket.GetStream());
+                byte[] header = new byte[4];
+                await stream.ReadFullyAsync(header, 0, 4);
+                int clientVer = await stream.ReadIntAsync();
+
+                // Reject version
+                stream.WriteBoolean(false);
+                stream.WriteInt(999); // server supports version 999
+                await stream.BaseStream.FlushAsync();
+            });
+
+            var client = new QuickShareClient();
+
+            try
+            {
+                bool threw = false;
+                try
+                {
+                    await client.ConnectAsync("127.0.0.1", testPort, 2000);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    threw = true;
+                    Assert(ex.Message.Contains("版本不匹配"), $"Exception should mention version mismatch, got: {ex.Message}");
+                }
+
+                Assert(threw, "ConnectAsync must throw on version mismatch");
+                Assert(!client.IsConnected, "Client must not be connected after failed handshake");
+                await mockServerTask;
+            }
+            finally
+            {
+                client.Disconnect();
+                mockListener.Stop();
+            }
+        }
+
+        private static async Task TestQuickShareClientAbruptDisconnect()
+        {
+            int testPort = GetAvailablePort();
+            var server = new QuickShareServer();
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+
+            try
+            {
+                await client.ConnectAsync("127.0.0.1", testPort);
+                Assert(client.IsConnected, "Client should be connected");
+
+                // Abruptly shut down server
+                server.Stop();
+
+                // Client disconnect should gracefully clean up without deadlock
+                client.Disconnect();
+                Assert(!client.IsConnected, "Client should be clean after Disconnect");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+            }
         }
     }
 

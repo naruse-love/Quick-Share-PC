@@ -11,17 +11,21 @@ namespace QuickShare.PC.Converters
         {
             if (value is string status)
             {
-                if (status.Contains("运行") || status.Contains("已启动") || status.Contains("连接") || status.Equals("完成"))
+                if (status.Contains("未连接") || status.Contains("已停止"))
                 {
-                    return new SolidColorBrush(Color.FromRgb(46, 125, 50)); // Green
+                    return new SolidColorBrush(Color.FromRgb(148, 163, 184)); // Slate Gray (#94A3B8)
                 }
-                if (status.Contains("停止") || status.Equals("失败"))
+                if (status.Contains("失败") || status.Contains("错误") || status.Contains("停止"))
                 {
-                    return new SolidColorBrush(Color.FromRgb(198, 40, 40)); // Red
+                    return new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red (#EF4444)
                 }
-                if (status.Contains("监听") || status.Contains("传输") || status.Contains("中"))
+                if (status.Contains("正在连接") || status.Contains("监听") || status.Contains("传输") || status.Contains("中"))
                 {
-                    return new SolidColorBrush(Color.FromRgb(21, 101, 192)); // Blue
+                    return new SolidColorBrush(Color.FromRgb(37, 99, 235)); // Blue (#2563EB)
+                }
+                if (status.Contains("运行") || status.Contains("已启动") || status.Contains("已连接") || status.Equals("完成"))
+                {
+                    return new SolidColorBrush(Color.FromRgb(22, 163, 74)); // Green (#16A34A)
                 }
             }
             if (value is bool isRunning)
