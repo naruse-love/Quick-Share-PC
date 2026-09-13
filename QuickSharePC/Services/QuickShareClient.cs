@@ -32,6 +32,7 @@ namespace QuickShare.PC.Services
         public int RemoteFileSystem { get; private set; } = QuickShareDirectory.FILE_SYSTEM_UNIX;
         public string RemoteHomeDir { get; private set; } = string.Empty;
         public string SaveDirectory { get; set; } = AppConfig.GetDefaultSaveDirectory();
+        public bool Enable4KFriendly { get; set; } = false;
 
         // Connection & Status Events
         public event Action<string>? OnConnected;
@@ -703,7 +704,7 @@ namespace QuickShare.PC.Services
             var localDir = new QuickShareDirectory(localBase, localFs);
             var remoteDir = new QuickShareDirectory(serverDestDir, serverFs);
 
-            var readFileCall = new ReadFileCall(_buffers, localFiles, localDir, remoteDir, 1);
+            var readFileCall = new ReadFileCall(_buffers, localFiles, localDir, remoteDir, 1, Enable4KFriendly);
             var readTask = Task.Run(() => readFileCall.ExecuteAsync());
 
             var speedCts = new CancellationTokenSource();
@@ -853,7 +854,7 @@ namespace QuickShare.PC.Services
                 int destFs = (targetRemoteDest.Contains(":\\") || targetRemoteDest.Contains(":/")) ? QuickShareDirectory.FILE_SYSTEM_WINDOWS : RemoteFileSystem;
                 var remoteDir = new QuickShareDirectory(targetRemoteDest, destFs);
 
-                var readFileCall = new ReadFileCall(_buffers, remoteFiles, localDir, remoteDir, 1);
+                var readFileCall = new ReadFileCall(_buffers, remoteFiles, localDir, remoteDir, 1, Enable4KFriendly);
                 var readTask = Task.Run(() => readFileCall.ExecuteAsync());
 
                 var speedCts = new CancellationTokenSource();

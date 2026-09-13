@@ -78,6 +78,14 @@ namespace QuickShare.PC.EmpiricalTests
                 await RunTestAsync("QuickShareClient_ListRemoteFiles", TestQuickShareClientListRemoteFiles);
                 await RunTestAsync("QuickShareClient_RejectVersionMismatch", TestQuickShareClientVersionMismatch);
                 await RunTestAsync("QuickShareClient_AbruptDisconnectAndCleanup", TestQuickShareClientAbruptDisconnect);
+
+                // Group 9: 4K-Friendly Pipeline & Batch Compression
+                await RunTestAsync("ReadFileCall_4KFriendly_SmallFilesPackagedToZip", TestReadFileCall4KFriendlySmallFilesPackagedToZip);
+                await RunTestAsync("WriteFileCall_AutoExtractBatchZip", TestWriteFileCallAutoExtractBatchZip);
+                await RunTestAsync("E2E_4KFriendly_PipelinedTransfer", TestE2E4KFriendlyPipelinedTransfer);
+                await RunTestAsync("E2E_4KFriendly_DirectoryTimestampPreservation", TestE2E4KFriendlyDirectoryTimestampPreservation);
+                await RunTestAsync("E2E_4KFriendly_MixedLargeAndSmallFiles", TestE2E4KFriendlyMixedLargeAndSmallFiles);
+                await RunTestAsync("4KFriendly_TimestampClampingAndBoundaryProtection", Test4KFriendlyTimestampClampingAndBoundaryProtection);
             }
             catch (Exception ex)
             {
@@ -1567,6 +1575,441 @@ namespace QuickShare.PC.EmpiricalTests
             {
                 client.Disconnect();
                 server.Stop();
+            }
+        }
+
+        private static async Task TestReadFileCall4KFriendlySmallFilesPackagedToZip()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "QSReadFile4K_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            string subDir = Path.Combine(tempDir, "sub");
+            Directory.CreateDirectory(subDir);
+
+            try
+            {
+                // 1. Create small files (<= 128KB) and big files (> 128KB)
+                string small1 = Path.Combine(tempDir, "small1.txt");
+                File.WriteAllBytes(small1, new byte[10 * 1024]);
+
+                string small2 = Path.Combine(tempDir, "small2.txt");
+                File.WriteAllBytes(small2, new byte[20 * 1024]);
+
+                string emptyFile = Path.Combine(tempDir, "empty.txt");
+                File.WriteAllBytes(emptyFile, Array.Empty<byte>());
+
+                string large1 = Path.Combine(tempDir, "large1.bin");
+                File.WriteAllBytes(large1, new byte[200 * 1024]); // > 128KB
+
+                string subSmall = Path.Combine(subDir, "sub_small.txt");
+                File.WriteAllBytes(subSmall, new byte[15 * 1024]);
+
+                string subLarge = Path.Combine(subDir, "sub_large.bin");
+                File.WriteAllBytes(subLarge, new byte[250 * 1024]); // > 128KB
+
+                var buffers = new BlockingCollection<byte[]>();
+                for (int i = 0; i < 8; i++) buffers.Add(new byte[FileBlock.BLOCK_SIZE]);
+
+                var rootFolder = new RemoteFile(Path.GetFileName(tempDir), tempDir, 1600000000000L, 0, true);
+                var localDir = new QuickShareDirectory(tempDir, QuickShareDirectory.GetCurrentFileSystem());
+                var remoteDir = new QuickShareDirectory(@"C:\Dest", QuickShareDirectory.FILE_SYSTEM_WINDOWS);
+
+                var readFileCall = new ReadFileCall(buffers, new List<RemoteFile> { rootFolder }, localDir, remoteDir, 1, enable4KFriendly: true);
+                var readTask = Task.Run(() => readFileCall.ExecuteAsync());
+
+                var blocks = new List<FileBlock>();
+                while (true)
+                {
+                    var block = readFileCall.TakeBlock();
+                    if (block == ReadFileCall.END_POINT) break;
+                    blocks.Add(block);
+                }
+
+                await readTask;
+
+                // Verify directory blocks
+                var dirBlocks = blocks.Where(b => !b.IsFile).ToList();
+                Assert(dirBlocks.Count >= 2, $"Expected at least 2 directory blocks, got {dirBlocks.Count}");
+
+                // Verify big files were streamed directly
+                var fileBlocks = blocks.Where(b => b.IsFile).ToList();
+                var directLarge1 = fileBlocks.Where(b => b.Path.EndsWith("large1.bin")).ToList();
+                Assert(directLarge1.Count > 0, "large1.bin should be streamed directly");
+                var directSubLarge = fileBlocks.Where(b => b.Path.EndsWith("sub_large.bin")).ToList();
+                Assert(directSubLarge.Count > 0, "sub_large.bin should be streamed directly");
+
+                // Verify small files were packaged into batch zips
+                var batchZipBlocks = fileBlocks.Where(b => Path.GetFileName(b.Path).StartsWith("__qs_batch_") && b.Path.EndsWith(".zip")).ToList();
+                Assert(batchZipBlocks.Count >= 2, $"Expected at least 2 batch zip entries (root and sub), got {batchZipBlocks.Count}");
+
+                // Verify contents of the root batch zip
+                var rootZipBlock = batchZipBlocks.First(b => !b.Path.Contains(@"\sub\"));
+                Assert(rootZipBlock.Data != null, "Batch zip data must not be null");
+                using (var ms = new MemoryStream(rootZipBlock.Data!, 0, rootZipBlock.DataLength))
+                using (var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read))
+                {
+                    var entryNames = archive.Entries.Select(e => e.Name).ToHashSet();
+                    Assert(entryNames.Contains("small1.txt"), "Root zip should contain small1.txt");
+                    Assert(entryNames.Contains("small2.txt"), "Root zip should contain small2.txt");
+                    Assert(entryNames.Contains("empty.txt"), "Root zip should contain empty.txt");
+                    Assert(!entryNames.Contains("large1.bin"), "Root zip should NOT contain large1.bin");
+                    Assert(!entryNames.Contains("sub_small.txt"), "Root zip should NOT contain sub_small.txt");
+                }
+
+                // Verify contents of the sub batch zip
+                var subZipBlock = batchZipBlocks.First(b => b.Path.Contains(@"\sub\"));
+                Assert(subZipBlock.Data != null, "Sub batch zip data must not be null");
+                using (var ms = new MemoryStream(subZipBlock.Data!, 0, subZipBlock.DataLength))
+                using (var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read))
+                {
+                    var entryNames = archive.Entries.Select(e => e.Name).ToHashSet();
+                    Assert(entryNames.Contains("sub_small.txt"), "Sub zip should contain sub_small.txt");
+                    Assert(!entryNames.Contains("sub_large.bin"), "Sub zip should NOT contain sub_large.bin");
+                }
+
+                // Recycle buffers
+                foreach (var b in fileBlocks)
+                {
+                    if (b.Data != null) buffers.Add(b.Data);
+                }
+
+                Assert(buffers.Count == 8, $"All buffers must be recycled, got {buffers.Count}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestWriteFileCallAutoExtractBatchZip()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "qs_test_write_batch_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var buffers = new BlockingCollection<byte[]>();
+            for (int i = 0; i < 8; i++) buffers.Add(new byte[1024 * 1024]);
+
+            try
+            {
+                var writeFileCall = new WriteFileCall(buffers, dequeCount: 1, baseSaveDir: tempDir);
+                var writeTask = Task.Run(() => writeFileCall.ExecuteAsync());
+
+                // Prepare a batch zip with 2 files
+                byte[] zipBytes;
+                long timeA = 1650000000000L;
+                long timeB = 1680000000000L;
+                using (var ms = new MemoryStream())
+                {
+                    using (var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                    {
+                        var entryA = archive.CreateEntry("extracted_a.txt");
+                        entryA.LastWriteTime = DateTimeOffset.FromUnixTimeMilliseconds(timeA).ToLocalTime();
+                        using (var es = entryA.Open())
+                        using (var sw = new StreamWriter(es))
+                        {
+                            sw.Write("Content of extracted file A");
+                        }
+
+                        var entryB = archive.CreateEntry("extracted_b.txt");
+                        entryB.LastWriteTime = DateTimeOffset.FromUnixTimeMilliseconds(timeB).ToLocalTime();
+                        using (var es = entryB.Open())
+                        using (var sw = new StreamWriter(es))
+                        {
+                            sw.Write("Content of extracted file B");
+                        }
+                    }
+                    zipBytes = ms.ToArray();
+                }
+
+                // Feed block to WriteFileCall
+                byte[] buf = buffers.Take();
+                Buffer.BlockCopy(zipBytes, 0, buf, 0, zipBytes.Length);
+                var zipBlock = new FileBlock(true, 0, "__qs_batch_12345678.zip", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), zipBytes.Length, 0, buf, zipBytes.Length);
+                writeFileCall.PutBlock(zipBlock, 0);
+                writeFileCall.FinishChannel(0);
+
+                await writeTask;
+
+                // Verify files extracted
+                string extractedA = Path.Combine(tempDir, "extracted_a.txt");
+                string extractedB = Path.Combine(tempDir, "extracted_b.txt");
+                Assert(File.Exists(extractedA), "extracted_a.txt should exist on disk");
+                Assert(File.Exists(extractedB), "extracted_b.txt should exist on disk");
+
+                string contentA = File.ReadAllText(extractedA);
+                Assert(contentA == "Content of extracted file A", $"Content A mismatch: {contentA}");
+                string contentB = File.ReadAllText(extractedB);
+                Assert(contentB == "Content of extracted file B", $"Content B mismatch: {contentB}");
+
+                // Verify timestamps
+                var actualTimeA = new DateTimeOffset(File.GetLastWriteTimeUtc(extractedA)).ToUnixTimeMilliseconds();
+                Assert(Math.Abs(actualTimeA - timeA) < 3000, $"Timestamp A mismatch: {actualTimeA} vs {timeA}");
+
+                // Verify zip deleted
+                string zipOnDisk = Path.Combine(tempDir, "__qs_batch_12345678.zip");
+                Assert(!File.Exists(zipOnDisk), "Batch zip file should be deleted after successful extraction");
+
+                // Verify buffers recycled
+                Assert(buffers.Count == 8, $"All buffers must be recycled, got {buffers.Count}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestE2E4KFriendlyPipelinedTransfer()
+        {
+            int testPort = GetAvailablePort();
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSE2E4K_Server_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSE2E4K_Client_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+
+            var server = new QuickShareServer();
+            server.SaveDirectory = serverDir;
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+            client.Enable4KFriendly = true;
+
+            try
+            {
+                await client.ConnectAsync("127.0.0.1", testPort);
+
+                // Prepare nested test folder with small and big files
+                string srcFolder = Path.Combine(clientDir, "ProjectRoot");
+                string srcSub = Path.Combine(srcFolder, "node_modules");
+                Directory.CreateDirectory(srcSub);
+
+                for (int i = 0; i < 5; i++)
+                {
+                    File.WriteAllText(Path.Combine(srcFolder, $"root_small_{i}.txt"), $"Root small content {i}");
+                }
+                File.WriteAllBytes(Path.Combine(srcFolder, "root_large.bin"), new byte[250 * 1024]);
+
+                for (int i = 0; i < 10; i++)
+                {
+                    File.WriteAllText(Path.Combine(srcSub, $"dep_{i}.js"), $"console.log({i});");
+                }
+                File.WriteAllBytes(Path.Combine(srcSub, "large_lib.bin"), new byte[300 * 1024]);
+
+                var completionTcs = new TaskCompletionSource<bool>();
+                server.OnTransferCompleted += task =>
+                {
+                    completionTcs.TrySetResult(true);
+                };
+
+                await client.SendFilesAsync(new List<string> { srcFolder }, serverDir);
+                await Task.WhenAny(completionTcs.Task, Task.Delay(10000));
+                Assert(completionTcs.Task.IsCompletedSuccessfully, "4K friendly transfer must complete within timeout");
+
+                // Verify files on server destination
+                string destFolder = Path.Combine(serverDir, "ProjectRoot");
+                string destSub = Path.Combine(destFolder, "node_modules");
+                Assert(Directory.Exists(destFolder), "Destination folder should exist");
+                Assert(Directory.Exists(destSub), "Destination subfolder should exist");
+
+                for (int i = 0; i < 5; i++)
+                {
+                    string p = Path.Combine(destFolder, $"root_small_{i}.txt");
+                    Assert(File.Exists(p), $"root_small_{i}.txt must exist on server");
+                    Assert(File.ReadAllText(p) == $"Root small content {i}", "File content mismatch");
+                }
+                Assert(File.Exists(Path.Combine(destFolder, "root_large.bin")), "root_large.bin must exist on server");
+
+                for (int i = 0; i < 10; i++)
+                {
+                    string p = Path.Combine(destSub, $"dep_{i}.js");
+                    Assert(File.Exists(p), $"dep_{i}.js must exist on server");
+                    Assert(File.ReadAllText(p) == $"console.log({i});", "Dep content mismatch");
+                }
+                Assert(File.Exists(Path.Combine(destSub, "large_lib.bin")), "large_lib.bin must exist on server");
+
+                // Verify NO batch zip files remain
+                var remainingZips = Directory.GetFiles(destFolder, "__qs_batch_*.zip", SearchOption.AllDirectories);
+                Assert(remainingZips.Length == 0, $"No batch zips should remain on disk, found {remainingZips.Length}");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestE2E4KFriendlyDirectoryTimestampPreservation()
+        {
+            int testPort = GetAvailablePort();
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSTime_Server_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSTime_Client_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+
+            var server = new QuickShareServer();
+            server.SaveDirectory = serverDir;
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+            client.Enable4KFriendly = true;
+
+            try
+            {
+                await client.ConnectAsync("127.0.0.1", testPort);
+
+                string srcFolder = Path.Combine(clientDir, "TimedDir");
+                string srcSub = Path.Combine(srcFolder, "SubTimed");
+                Directory.CreateDirectory(srcSub);
+
+                string smallFile = Path.Combine(srcSub, "item.txt");
+                File.WriteAllText(smallFile, "Timestamp test item");
+
+                var expectedFileTime = new DateTime(2023, 5, 15, 10, 30, 0, DateTimeKind.Utc);
+                var expectedSubDirTime = new DateTime(2023, 5, 14, 8, 20, 0, DateTimeKind.Utc);
+                var expectedRootDirTime = new DateTime(2023, 5, 13, 6, 10, 0, DateTimeKind.Utc);
+
+                File.SetLastWriteTimeUtc(smallFile, expectedFileTime);
+                Directory.SetLastWriteTimeUtc(srcSub, expectedSubDirTime);
+                Directory.SetLastWriteTimeUtc(srcFolder, expectedRootDirTime);
+
+                var completionTcs = new TaskCompletionSource<bool>();
+                server.OnTransferCompleted += task => completionTcs.TrySetResult(true);
+
+                await client.SendFilesAsync(new List<string> { srcFolder }, serverDir);
+                await Task.WhenAny(completionTcs.Task, Task.Delay(10000));
+                Assert(completionTcs.Task.IsCompletedSuccessfully, "Transfer should complete");
+
+                string destFolder = Path.Combine(serverDir, "TimedDir");
+                string destSub = Path.Combine(destFolder, "SubTimed");
+                string destFile = Path.Combine(destSub, "item.txt");
+
+                Assert(File.Exists(destFile), "Extracted file should exist");
+                var actualFileTime = File.GetLastWriteTimeUtc(destFile);
+                Assert(Math.Abs((actualFileTime - expectedFileTime).TotalSeconds) < 3, $"File time mismatch: {actualFileTime} vs {expectedFileTime}");
+
+                var actualSubDirTime = Directory.GetLastWriteTimeUtc(destSub);
+                Assert(Math.Abs((actualSubDirTime - expectedSubDirTime).TotalSeconds) < 3, $"Subdir time mismatch: {actualSubDirTime} vs {expectedSubDirTime}");
+
+                var actualRootDirTime = Directory.GetLastWriteTimeUtc(destFolder);
+                Assert(Math.Abs((actualRootDirTime - expectedRootDirTime).TotalSeconds) < 3, $"Root dir time mismatch: {actualRootDirTime} vs {expectedRootDirTime}");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task TestE2E4KFriendlyMixedLargeAndSmallFiles()
+        {
+            int testPort = GetAvailablePort();
+            string serverDir = Path.Combine(Path.GetTempPath(), "QSMixed_Server_" + Guid.NewGuid().ToString("N"));
+            string clientDir = Path.Combine(Path.GetTempPath(), "QSMixed_Client_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(serverDir);
+            Directory.CreateDirectory(clientDir);
+
+            var server = new QuickShareServer();
+            server.SaveDirectory = serverDir;
+            server.Start(testPort);
+
+            var client = new QuickShareClient();
+            client.SaveDirectory = clientDir;
+            client.Enable4KFriendly = true;
+
+            try
+            {
+                await client.ConnectAsync("127.0.0.1", testPort);
+
+                // 1. Loose standalone small file (should NOT be compressed)
+                string standaloneSmall = Path.Combine(clientDir, "standalone.txt");
+                File.WriteAllText(standaloneSmall, "Standalone loose small file");
+
+                // 2. Folder with small files (SHOULD be compressed)
+                string folder = Path.Combine(clientDir, "MixedFolder");
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(Path.Combine(folder, "folder_small.txt"), "Folder small file");
+                File.WriteAllBytes(Path.Combine(folder, "folder_large.bin"), new byte[200 * 1024]);
+
+                var completionTcs = new TaskCompletionSource<bool>();
+                server.OnTransferCompleted += task => completionTcs.TrySetResult(true);
+
+                await client.SendFilesAsync(new List<string> { standaloneSmall, folder }, serverDir);
+                await Task.WhenAny(completionTcs.Task, Task.Delay(10000));
+                Assert(completionTcs.Task.IsCompletedSuccessfully, "Mixed transfer should complete");
+
+                // Verify standalone file
+                string destStandalone = Path.Combine(serverDir, "standalone.txt");
+                Assert(File.Exists(destStandalone), "Standalone file should exist on server");
+                Assert(File.ReadAllText(destStandalone) == "Standalone loose small file", "Standalone content mismatch");
+
+                // Verify folder files
+                string destFolderSmall = Path.Combine(serverDir, "MixedFolder", "folder_small.txt");
+                string destFolderLarge = Path.Combine(serverDir, "MixedFolder", "folder_large.bin");
+                Assert(File.Exists(destFolderSmall), "Folder small file should exist on server");
+                Assert(File.Exists(destFolderLarge), "Folder large file should exist on server");
+            }
+            finally
+            {
+                client.Disconnect();
+                server.Stop();
+                try { Directory.Delete(serverDir, true); } catch { }
+                try { Directory.Delete(clientDir, true); } catch { }
+            }
+        }
+
+        private static async Task Test4KFriendlyTimestampClampingAndBoundaryProtection()
+        {
+            // 1. Verify ClampZipTimestamp clamps out-of-range timestamps
+            var clampEpoch = ReadFileCall.ClampZipTimestamp(0);
+            Assert(clampEpoch.Year == 1980, $"Epoch (0) should clamp to 1980, got {clampEpoch.Year}");
+
+            var clampNegative = ReadFileCall.ClampZipTimestamp(-1000000);
+            Assert(clampNegative.Year == 1980, $"Negative time should clamp to 1980, got {clampNegative.Year}");
+
+            var clampFuture = ReadFileCall.ClampZipTimestamp(DateTimeOffset.MaxValue.ToUnixTimeMilliseconds());
+            Assert(clampFuture.Year == 2107, $"Far future should clamp to 2107, got {clampFuture.Year}");
+
+            // 2. Verify folder containing epoch-timestamped (0) file packages into batch zip without ArgumentOutOfRangeException
+            string tempDir = Path.Combine(Path.GetTempPath(), "QSClamp_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string epochFile = Path.Combine(tempDir, "epoch.txt");
+                File.WriteAllText(epochFile, "epoch test");
+
+                var buffers = new BlockingCollection<byte[]>();
+                for (int i = 0; i < 4; i++) buffers.Add(new byte[FileBlock.BLOCK_SIZE]);
+
+                var rootFolder = new RemoteFile(Path.GetFileName(tempDir), tempDir, 0L, 0, true);
+                var localDir = new QuickShareDirectory(tempDir, QuickShareDirectory.GetCurrentFileSystem());
+                var remoteDir = new QuickShareDirectory(@"C:\Dest", QuickShareDirectory.FILE_SYSTEM_WINDOWS);
+
+                var readFileCall = new ReadFileCall(buffers, new List<RemoteFile> { rootFolder }, localDir, remoteDir, 1, enable4KFriendly: true);
+                var readTask = Task.Run(() => readFileCall.ExecuteAsync());
+
+                var blocks = new List<FileBlock>();
+                while (true)
+                {
+                    var block = readFileCall.TakeBlock();
+                    if (block == ReadFileCall.END_POINT) break;
+                    blocks.Add(block);
+                }
+                await readTask;
+
+                var zipBlocks = blocks.Where(b => b.IsFile && Path.GetFileName(b.Path).StartsWith("__qs_batch_")).ToList();
+                Assert(zipBlocks.Count == 1, $"Expected 1 batch zip, got {zipBlocks.Count}");
+
+                foreach (var b in blocks)
+                {
+                    if (b.Data != null) buffers.Add(b.Data);
+                }
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
             }
         }
     }

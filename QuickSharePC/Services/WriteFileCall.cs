@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -78,11 +79,7 @@ namespace QuickShare.PC.Services
                     {
                         if (_currentFileStream != null)
                         {
-                            CloseFile();
-                            if (lastPath != null)
-                            {
-                                SetLastModified(lastPath, lastModified);
-                            }
+                            HandleCompletedFile(lastPath, lastModified);
                         }
 
                         _currentFileStream = CreateAndOpenFile(targetPath, currentBlock.TotalSize);
@@ -123,8 +120,7 @@ namespace QuickShare.PC.Services
 
                 if (lastPath != null)
                 {
-                    CloseFile();
-                    SetLastModified(lastPath, lastModified);
+                    HandleCompletedFile(lastPath, lastModified);
                 }
 
                 // Re-apply directory timestamps in reverse order (bottom-up / deepest first)
@@ -338,6 +334,75 @@ namespace QuickShare.PC.Services
                 {
                     _currentFileStream = null;
                 }
+            }
+        }
+
+        private void HandleCompletedFile(string? filePath, long lastModified)
+        {
+            if (filePath == null) return;
+            CloseFile();
+            if (lastModified > 0)
+            {
+                SetLastModified(filePath, lastModified);
+            }
+            TryExtractAndCleanupBatchZip(filePath);
+        }
+
+        private void TryExtractAndCleanupBatchZip(string filePath)
+        {
+            try
+            {
+                string fileName = Path.GetFileName(filePath);
+                if (fileName.StartsWith("__qs_batch_", StringComparison.OrdinalIgnoreCase) &&
+                    fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    string? extractDir = Path.GetDirectoryName(filePath);
+                    if (string.IsNullOrEmpty(extractDir))
+                    {
+                        extractDir = _baseSaveDir ?? AppDomain.CurrentDomain.BaseDirectory;
+                    }
+
+                    string fullExtractDir = Path.GetFullPath(extractDir);
+                    if (!fullExtractDir.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                    {
+                        fullExtractDir += Path.DirectorySeparatorChar;
+                    }
+
+                    using (var archive = ZipFile.OpenRead(filePath))
+                    {
+                        foreach (var entry in archive.Entries)
+                        {
+                            if (string.IsNullOrEmpty(entry.Name) || entry.Name == "." || entry.Name == "..") continue;
+
+                            string destPath = Path.Combine(extractDir, entry.Name);
+                            string fullDestPath = Path.GetFullPath(destPath);
+                            if (!fullDestPath.StartsWith(fullExtractDir, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            entry.ExtractToFile(destPath, overwrite: true);
+                            try
+                            {
+                                File.SetLastWriteTime(destPath, entry.LastWriteTime.LocalDateTime);
+                            }
+                            catch { }
+                        }
+                    }
+
+                    try
+                    {
+                        File.Delete(filePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Warning: Failed to delete batch zip {filePath}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Failed to extract batch zip {filePath}: {ex.Message}");
             }
         }
     }

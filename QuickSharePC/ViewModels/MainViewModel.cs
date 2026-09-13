@@ -34,6 +34,7 @@ namespace QuickShare.PC.ViewModels
         private string _selectedSaveDir = "";
         private int _port = 5740;
         private bool _autoStart;
+        private bool _enable4KFriendly;
         private string _connectedDevice = "未连接";
         private string _primaryLanIp = "127.0.0.1";
         private string _primaryNetworkType = "局域网";
@@ -88,6 +89,9 @@ namespace QuickShare.PC.ViewModels
             _client.SaveDirectory = SelectedSaveDir;
             Port = _config.Port;
             AutoStart = _config.AutoStart;
+            Enable4KFriendly = _config.Enable4KFriendly;
+            _server.Enable4KFriendly = Enable4KFriendly;
+            _client.Enable4KFriendly = Enable4KFriendly;
             TargetIp = !string.IsNullOrWhiteSpace(_config.TargetIp) ? _config.TargetIp : "192.168.1.100";
             TargetPort = _config.TargetPort > 0 ? _config.TargetPort : 5740;
             SelectedModeIndex = _config.IsClientMode ? 1 : 0;
@@ -495,6 +499,23 @@ namespace QuickShare.PC.ViewModels
                 _config.AutoStart = _autoStart;
                 _configService.SaveConfig(_config);
                 SetAutoStartRegistry(_autoStart);
+            }
+        }
+
+        public bool Enable4KFriendly
+        {
+            get => _enable4KFriendly;
+            set
+            {
+                if (_enable4KFriendly != value)
+                {
+                    _enable4KFriendly = value;
+                    _server.Enable4KFriendly = value;
+                    _client.Enable4KFriendly = value;
+                    OnPropertyChanged();
+                    _config.Enable4KFriendly = value;
+                    _configService.SaveConfig(_config);
+                }
             }
         }
 

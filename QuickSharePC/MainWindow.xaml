@@ -443,6 +443,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Text="存储与偏好设置" Style="{StaticResource HeaderStyle}" />
@@ -473,6 +474,9 @@
 
                         <!-- Auto Start -->
                         <CheckBox Grid.Row="3" IsChecked="{Binding AutoStart, Mode=TwoWay}" Content="🚀 开机自动启动 (托盘运行)" FontSize="12.5" Foreground="#334155" VerticalAlignment="Center" />
+
+                        <!-- 4K Friendly Mode -->
+                        <CheckBox Grid.Row="4" IsChecked="{Binding Enable4KFriendly, Mode=TwoWay}" Content="💾 硬盘 4K 友好模式 (传输文件夹时自动打包小文件)" FontSize="12.5" Foreground="#334155" VerticalAlignment="Center" Margin="0,10,0,0" ToolTip="传输文件夹时自动压缩≤128KB小文件，减少磁盘4K随机写入" />
                     </Grid>
                 </Border>
             </StackPanel>
